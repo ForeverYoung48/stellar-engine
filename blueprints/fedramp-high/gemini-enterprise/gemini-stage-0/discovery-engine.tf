@@ -62,7 +62,8 @@ resource "google_storage_bucket" "gemini_enterprise_gcs_bucket" {
   name                        = each.value.name
   location                    = var.geolocation
   uniform_bucket_level_access = true
-  force_destroy               = true # Set to true only for non-production/demo
+  public_access_prevention    = "enforced"
+  force_destroy               = false
 
   dynamic "encryption" {
     for_each = local.cmek_key_id != null ? [1] : []
@@ -266,30 +267,34 @@ resource "google_discovery_engine_search_engine" "gemini_enterprise_search_engin
     search_add_ons             = ["SEARCH_ADD_ON_LLM"]
   }
 
-  # Merge base features with app-specific overrides
-  features = {
-    "agent-gallery"                        = "FEATURE_STATE_ON",
-    "agent-sharing-without-admin-approval" = each.value.enable_agent_sharing_without_approval ? "FEATURE_STATE_ON" : "FEATURE_STATE_OFF"
-    "bi-directional-audio"                 = "FEATURE_STATE_OFF",
-    "disable-image-generation"             = "FEATURE_STATE_ON",
-    "disable-video-generation"             = "FEATURE_STATE_ON",
-    "disable-onedrive-upload"              = "FEATURE_STATE_ON",
-    "disable-talk-to-content"              = "FEATURE_STATE_OFF",
-    "disable-google-drive-upload"          = "FEATURE_STATE_ON",
-    "disable-welcome-emails"               = "FEATURE_STATE_OFF",
-    "disable-agent-sharing"                = each.value.enable_agent_sharing ? "FEATURE_STATE_OFF" : "FEATURE_STATE_ON",
-    "enable-end-user-sharing-with-groups"  = "FEATURE_STATE_OFF",
-    "feedback"                             = "FEATURE_STATE_OFF",
-    "model-selector"                       = "FEATURE_STATE_ON",
-    "no-code-agent-builder"                = "FEATURE_STATE_ON",
-    "notebook-lm"                          = "FEATURE_STATE_OFF",
-    "people-search"                        = "FEATURE_STATE_OFF",
-    "people-search-org-chart"              = "FEATURE_STATE_OFF",
-    "personalization-memory"               = "FEATURE_STATE_OFF",
-    "personalization-suggested-highlights" = "FEATURE_STATE_OFF",
-    "prompt-gallery"                       = "FEATURE_STATE_OFF",
-    "session-sharing"                      = "FEATURE_STATE_OFF",
-  }
+  # Merge base features with app-specific overrides and compliance restrictions
+  features = merge(
+    {
+      "agent-gallery"                        = "FEATURE_STATE_ON"
+      "agent-sharing-without-admin-approval" = each.value.enable_agent_sharing_without_approval ? "FEATURE_STATE_ON" : "FEATURE_STATE_OFF"
+      "disable-agent-sharing"                = each.value.enable_agent_sharing ? "FEATURE_STATE_OFF" : "FEATURE_STATE_ON"
+      "model-selector"                       = "FEATURE_STATE_ON"
+      "no-code-agent-builder"                = "FEATURE_STATE_ON"
+    },
+    var.compliance_regime != "NONE" ? {
+      "bi-directional-audio"                 = "FEATURE_STATE_OFF"
+      "disable-image-generation"             = "FEATURE_STATE_ON"
+      "disable-video-generation"             = "FEATURE_STATE_ON"
+      "disable-onedrive-upload"              = "FEATURE_STATE_ON"
+      "disable-talk-to-content"              = "FEATURE_STATE_OFF"
+      "disable-google-drive-upload"          = "FEATURE_STATE_ON"
+      "disable-welcome-emails"               = "FEATURE_STATE_OFF"
+      "enable-end-user-sharing-with-groups"  = "FEATURE_STATE_OFF"
+      "feedback"                             = "FEATURE_STATE_OFF"
+      "notebook-lm"                          = "FEATURE_STATE_OFF"
+      "people-search"                        = "FEATURE_STATE_OFF"
+      "people-search-org-chart"              = "FEATURE_STATE_OFF"
+      "personalization-memory"               = "FEATURE_STATE_OFF"
+      "personalization-suggested-highlights" = "FEATURE_STATE_OFF"
+      "prompt-gallery"                       = "FEATURE_STATE_OFF"
+      "session-sharing"                      = "FEATURE_STATE_OFF"
+    } : {}
+  )
   provider = google-beta
 
   depends_on = [
