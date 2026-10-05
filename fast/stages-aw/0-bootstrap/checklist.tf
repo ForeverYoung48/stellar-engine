@@ -83,7 +83,6 @@ locals {
         ]
       ]
     ]))
-    location = try(local._cl_data.logging.sinks[0].destination.location, null)
   }
   uses_checklist = (
     local._cl_data != null
