@@ -14,33 +14,64 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Currently unused
-# DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+FAILED_CHECKS=()
 
-echo -- Boilerplate check --
-uv run --locked python tools/check_boilerplate.py "$PWD"
+run_check() {
+  local desc="$1"
+  shift
+  echo "-- $desc --"
+  if "$@"; then
+    echo "[PASS] $desc"
+  else
+    local status=$?
+    echo "[FAIL] $desc (exit code $status)"
+    FAILED_CHECKS+=("$desc")
+  fi
+}
 
-echo -- Terraform format --
-terraform fmt -recursive -check -diff "$PWD"
+run_check "Boilerplate check" uv run --locked python tools/check_boilerplate.py "$PWD"
 
-echo -- Terraform lint --
-bash tools/tflint.sh -f compact
+run_check "Terraform format" terraform fmt -recursive -check -diff "$PWD"
 
-echo -- READMEs --
-uv run --locked python tools/check_documentation.py --no-show-summary modules fast blueprints
+run_check "Terraform lint" bash tools/tflint.sh -f compact
 
-echo -- Links --
-uv run --locked python tools/check_links.py --no-show-summary "$PWD"
+run_check "READMEs" uv run --locked python tools/check_documentation.py --no-show-summary modules fast blueprints
 
-echo -- FAST Names --
-uv run --locked python tools/check_names.py --prefix-length=10 --failed-only fast/stages-aw
+run_check "Links" uv run --locked python tools/check_links.py --no-show-summary "$PWD"
 
-echo -- Python formatting --
-uv run --locked ruff format --check "$PWD"
-uv run --locked ruff check "$PWD"
+run_check "FAST Names" uv run --locked python tools/check_names.py --prefix-length=10 --failed-only fast/stages-aw
 
-echo -- Blueprint metadata --
-uv run --locked python tools/validate_metadata.py -v blueprints --verbose --failed-only
+run_check "Python formatting" uv run --locked ruff format --check "$PWD"
+
+run_check "Python lint" uv run --locked ruff check "$PWD"
+
+run_check "Blueprint metadata" uv run --locked python tools/validate_metadata.py -v blueprints --verbose --failed-only
 
 echo -- Version checks --
-find . -type f -name 'versions.tf' -exec diff -ub default-versions.tf {} \;
+version_failed=0
+while IFS= read -r -d '' vfile; do
+  if ! grep -q 'required_version' "$vfile" || ! grep -q 'hashicorp/google' "$vfile"; then
+    echo "Invalid versions.tf (missing required_version or hashicorp/google): $vfile"
+    version_failed=1
+  fi
+done < <(find . -type f -name 'versions.tf' -print0)
+
+if [ $version_failed -eq 0 ]; then
+  echo "[PASS] Version checks"
+else
+  echo "[FAIL] Version checks"
+  FAILED_CHECKS+=("Version checks")
+fi
+
+echo ""
+echo "================================================================================"
+if [ ${#FAILED_CHECKS[@]} -eq 0 ]; then
+  echo "All lint checks PASSED."
+  exit 0
+else
+  echo "Lint checks FAILED: ${#FAILED_CHECKS[@]} check(s) reported errors:"
+  for check in "${FAILED_CHECKS[@]}"; do
+    echo "  - $check"
+  done
+  exit 1
+fi
