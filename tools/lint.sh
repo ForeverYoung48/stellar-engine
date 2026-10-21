@@ -54,7 +54,7 @@ while IFS= read -r -d '' vfile; do
     echo "Invalid versions.tf (missing required_version or hashicorp/google): $vfile"
     version_failed=1
   fi
-done < <(find . -type f -name 'versions.tf' -print0)
+done < <(find . \( -name '.git' -o -name '.terraform' -o -name '.venv' -o -name 'venv' -o -name 'node_modules' -o -name '__pycache__' \) -prune -o -type f -name 'versions.tf' -print0)
 
 if [ $version_failed -eq 0 ]; then
   echo "[PASS] Version checks"
