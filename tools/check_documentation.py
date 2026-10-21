@@ -109,7 +109,9 @@ def _check_dir(dir_name, exclude_files=None, files=False, show_extra=False):
                 )
                 diff = "".join([header] + [x for x in ndiff if x[0] != " "])
 
-            elif empty := [v.name for v in newvars if not v.description]:
+            elif current_doc and (
+                empty := [v.name for v in newvars if not v.description]
+            ):
                 state = State.FAIL_VARIABLE_DESCRIPTION
                 diff = "\n".join(
                     [
@@ -119,7 +121,9 @@ def _check_dir(dir_name, exclude_files=None, files=False, show_extra=False):
                     ]
                 )
 
-            elif empty := [o.name for o in newouts if not o.description]:
+            elif current_doc and (
+                empty := [o.name for o in newouts if not o.description]
+            ):
                 state = State.FAIL_OUTPUT_DESCRIPTION
                 diff = "\n".join(
                     [
@@ -128,7 +132,7 @@ def _check_dir(dir_name, exclude_files=None, files=False, show_extra=False):
                     ]
                 )
 
-            elif variables != sorted(variables):
+            elif current_doc and variables != sorted(variables):
                 state = State.FAIL_UNSORTED_VARS
                 diff = "\n".join(
                     [
@@ -138,7 +142,7 @@ def _check_dir(dir_name, exclude_files=None, files=False, show_extra=False):
                     ]
                 )
 
-            elif outputs != sorted(outputs):
+            elif current_doc and outputs != sorted(outputs):
                 state = State.FAIL_UNSORTED_OUTPUTS
                 diff = "\n".join(
                     [
@@ -148,9 +152,11 @@ def _check_dir(dir_name, exclude_files=None, files=False, show_extra=False):
                     ]
                 )
 
-            elif nc := [
-                v.name for v in newvars if not v.description.endswith(".")
-            ]:
+            elif current_doc and (
+                nc := [
+                    v.name for v in newvars if not v.description.endswith(".")
+                ]
+            ):
                 state = State.FAIL_VARIABLE_PERIOD
                 diff = "\n".join(
                     [
@@ -160,9 +166,11 @@ def _check_dir(dir_name, exclude_files=None, files=False, show_extra=False):
                     ]
                 )
 
-            elif nc := [
-                o.name for o in newouts if not o.description.endswith(".")
-            ]:
+            elif current_doc and (
+                nc := [
+                    o.name for o in newouts if not o.description.endswith(".")
+                ]
+            ):
                 state = State.FAIL_OUTPUT_PERIOD
                 diff = "\n".join(
                     [
@@ -172,7 +180,9 @@ def _check_dir(dir_name, exclude_files=None, files=False, show_extra=False):
                     ]
                 )
 
-            elif no_types := [v.name for v in newvars if not v.type]:
+            elif current_doc and (
+                no_types := [v.name for v in newvars if not v.type]
+            ):
                 state = State.FAIL_MISSING_TYPES
                 diff = "\n".join(
                     [

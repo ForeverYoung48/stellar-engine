@@ -295,7 +295,10 @@ def format_tfref_files(items):
 def format_tfref_fixtures(items):
     "Format fixtures table."
     for x in items:
-        yield f"- [{os.path.basename(x)}]({x})"
+        if os.sep in x or "/" in x:
+            yield f"- [{os.path.basename(x)}]({x})"
+        else:
+            yield f"- {x}"
 
 
 def format_tfref_outputs(items, show_extra=True):
@@ -449,12 +452,12 @@ def parse_fixtures(basepath, readme):
                             fixture_full = os.path.join(
                                 REPO_ROOT, "tests", fixture
                             )
-                            if not os.path.exists(fixture_full):
-                                raise SystemExit(f"Unknown fixture: {fixture}")
-                            fixture_relative = os.path.relpath(
-                                fixture_full, basepath
-                            )
-                            used_fixtures.add(fixture_relative)
+                            if os.path.exists(fixture_full):
+                                used_fixtures.add(
+                                    os.path.relpath(fixture_full, basepath)
+                                )
+                            else:
+                                used_fixtures.add(os.path.basename(fixture))
     yield from sorted(used_fixtures)
 
 

@@ -68,7 +68,10 @@ def check_link(link, readme_path, external):
                 link_valid = False
     # The link is private
     else:
-        target = (readme_path.parent / url.path).resolve()
+        if url.path.startswith("/"):
+            target = (BASEDIR / url.path.lstrip("/")).resolve()
+        else:
+            target = (readme_path.parent / url.path).resolve()
         link_valid = (
             target.is_relative_to(BASEDIR.resolve()) and target.exists()
         )

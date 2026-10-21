@@ -10,6 +10,7 @@ The purpose of this stage is to enable critical Google Cloud Organization level 
   - [Google Cloud Organization Policies and Tag-Based Conditions](#google-cloud-organization-policies-and-tag-based-conditions)
   - [Automation Google Cloud Project and Resources](#automation-google-cloud-project-and-resources)
   - [Billing Account](#billing-account)
+    - [Billing Budgets](#billing-budgets)
   - [Google Cloud Organization Level Logging](#google-cloud-organization-level-logging)
   - [Naming](#naming)
   - [Workforce Identity Federation](#workforce-identity-federation)
