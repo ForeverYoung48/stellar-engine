@@ -22,6 +22,8 @@ import sys
 import tempfile
 import unittest
 
+import yaml
+
 _APACHE_HEADER = """\
 # Copyright 2026 Google LLC
 #
@@ -239,3 +241,24 @@ class TestLintSh(unittest.TestCase):
             self.assertIn("Invalid versions.tf", proc.stdout)
             self.assertIn("[FAIL] Version checks", proc.stdout)
             self.assertIn("- Version checks", proc.stdout)
+
+    def test_ci_workflow_runs_repo_lint_on_push_and_pull_request(self):
+        """CI workflow must run tools/lint.sh on push and pull_request."""
+        ci_workflow = yaml.safe_load(
+            (self.repo_root / ".github" / "workflows" / "ci.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        triggers = ci_workflow.get("on", ci_workflow.get(True, {}))
+        self.assertIn("main", triggers["push"]["branches"])
+        self.assertIn("main", triggers["pull_request"]["branches"])
+
+        repo_lint = ci_workflow["jobs"]["repo-lint"]
+        self.assertEqual(repo_lint["name"], "Repository Lint")
+        run_commands = [
+            step.get("run", "") for step in repo_lint.get("steps", [])
+        ]
+        self.assertTrue(
+            any("bash tools/lint.sh" in cmd for cmd in run_commands),
+            "repo-lint job must execute bash tools/lint.sh",
+        )
