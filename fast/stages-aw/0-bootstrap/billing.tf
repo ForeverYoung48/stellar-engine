@@ -49,7 +49,8 @@ locals {
       )
       ? []
       : ["bigquerydatatransfer.googleapis.com"]
-    )
+    ),
+    var.monitoring_project != null ? ["monitoring.googleapis.com"] : []
   )
   billing_mode = (
     var.billing_account.no_iam

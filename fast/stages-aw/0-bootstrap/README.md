@@ -12,6 +12,7 @@ Stage 0 enables organization-level Google Cloud capabilities that require broad 
   - [Billing account](#billing-account)
     - [Billing budgets](#billing-budgets)
   - [Organization logging](#organization-logging)
+  - [Central monitoring project](#central-monitoring-project)
   - [Resource naming](#resource-naming)
   - [Workforce Identity Federation](#workforce-identity-federation)
   - [Workload Identity Federation](#workload-identity-federation)
@@ -21,6 +22,7 @@ Stage 0 enables organization-level Google Cloud capabilities that require broad 
   - [IAM bindings](#iam-bindings)
   - [Tenant separation-of-duties custom roles](#tenant-separation-of-duties-custom-roles)
   - [Log sinks](#log-sinks)
+    - [Tiered SIEM export](#tiered-siem-export)
   - [Naming convention](#naming-convention)
   - [Pre-created resources](#pre-created-resources)
   - [Federated identity providers](#federated-identity-providers)
@@ -115,7 +117,24 @@ Set the `billing_budget_amount` variable to create a default billing budget cove
 
 Stage 0 creates organization-level log sinks during bootstrap so audit trails are active before downstream resources deploy. Default log filters route [Cloud Audit Logs](https://cloud.google.com/logging/docs/audit), [VPC Service Controls violations](https://cloud.google.com/vpc-service-controls/docs/troubleshooting#vpc-sc-errors), and [Google Workspace logs](https://cloud.google.com/logging/docs/audit/configure-gsuite-audit-logs) into Cloud Logging buckets in the top-level audit logging project, alongside an unfiltered sink for [CIS Benchmark](https://cloud.google.com/security/compliance/cis) compliance.
 
-See [Log sinks](#log-sinks) to customize log filters or export destinations.
+See [Log sinks](#log-sinks) to customize log filters, exclusions, Pub/Sub pull subscriptions, or tiered regional SIEM exports.
+
+### Central monitoring project
+
+Set the optional `monitoring_project` variable to create a central Cloud Monitoring scoping project under the Common Services folder (or under `monitoring_project.parent_id` or `project_parent_ids.monitoring` when specified). Leaving `monitoring_project` as `null` keeps the default bootstrap plan unchanged.
+
+- The project deprivileges its default service account, applies a deletion lien, coalesces `monitoring_project.deletion_policy` to `project_deletion_policies.monitoring` (`DELETE` by default so Terraform can destroy or disable the project cleanly after removing its lien), and enables only `monitoring.googleapis.com` and `logging.googleapis.com`.
+- Project IAM grants `roles/owner` to the bootstrap service account (plus `bootstrap_user` during the initial bootstrap pass) and `roles/viewer` to the read-only bootstrap service account.
+- When `scope_core_projects` stays `true`, Stage 0 enables `monitoring.googleapis.com` on the core Stage 0 projects and attaches the automation, log export, and optional billing export projects to the metrics scope alongside any additional project IDs listed in `monitored_projects`. Scoping external projects through `monitoring_project.monitored_projects` requires granting `roles/monitoring.metricsScopesAdmin` to `automation-tf-bootstrap-sa` on those projects.
+- Stage 0 exports the scoping project ID through the `monitoring_project_id` and `project_ids.monitoring` Terraform outputs without modifying `0-bootstrap.auto.tfvars.json`.
+
+```hcl
+monitoring_project = {
+  name                = "monitoring-0"
+  scope_core_projects = true
+  monitored_projects  = ["my-app-project-0"]
+}
+```
 
 ### Resource naming
 
@@ -222,7 +241,66 @@ Note that `tenantProjectAdmin` treats a tenant project as a single trust-tier bo
 
 ### Log sinks
 
-Customize organization-level log exports through the `log_sinks` variable to add sinks with custom filters or route logs to Cloud Logging buckets, BigQuery datasets, Cloud Storage buckets, or Pub/Sub topics.
+Customize organization-level log exports through the `log_sinks` variable to add sinks with custom filters, sink-level `exclusions`, or Pub/Sub pull `subscriptions`, and route logs to Cloud Logging buckets, BigQuery datasets, Cloud Storage buckets, or Pub/Sub topics.
+
+- Add `exclusions` as a map of exclusion name to Cloud Logging filter string on any sink type.
+- Add `subscriptions` on `pubsub` sinks to provision CMEK-backed pull subscriptions with configurable `ack_deadline_seconds` between 10 and 600, `message_retention_duration`, non-expiring `expiration_policy_ttl` defaulting to `""`, and subscription-scoped `roles/pubsub.subscriber` IAM bindings for each principal in `subscribers`.
+
+```hcl
+log_sinks = {
+  security-events = {
+    type   = "pubsub"
+    filter = "logName:\"cloudaudit.googleapis.com\""
+    exclusions = {
+      exclude-health-checks = "protoPayload.methodName=\"health.check\""
+    }
+    subscriptions = {
+      siem-pull = {
+        ack_deadline_seconds       = 60
+        message_retention_duration = "604800s"
+        subscribers = [
+          "serviceAccount:siem-reader@my-project.iam.gserviceaccount.com"
+        ]
+      }
+    }
+  }
+}
+```
+
+#### Tiered SIEM export
+
+Set the optional `siem_export` variable to provision multi-tier, multi-region Pub/Sub topics, pull subscriptions, and matching log sinks keyed by `"${tier}-${region}"`. Leaving `siem_export` as `null` creates no SIEM topics or sinks.
+
+- Each topic pins its message storage policy to a single region and encrypts messages with a matching regional Cloud KMS key from `kms_keys`, falling back to the Stage 0 logging KMS key only when the region matches `regions.primary`.
+- When `manage_kms_iam` stays `true`, Stage 0 grants `roles/cloudkms.cryptoKeyEncrypterDecrypter` to the log-export Pub/Sub service agent on each CryptoKey in `siem_export.kms_keys`, which requires Stage 0's automation service account to hold KMS IAM permissions on external keys; set `manage_kms_iam = false` when those key bindings are managed externally.
+- Each tier creates one pull subscription per region with `roles/pubsub.subscriber` bound only at the subscription level to the principals listed in `subscribers`.
+- Cloud Logging sink writer identities receive `roles/pubsub.publisher` on their destination topics automatically from the provider response.
+
+```hcl
+siem_export = {
+  regions = ["us-east4", "us-west1"]
+  kms_keys = {
+    "us-west1" = "projects/my-project/locations/us-west1/keyRings/siem/cryptoKeys/pubsub"
+  }
+  tiers = {
+    tier-1 = {
+      filter = "logName:\"cloudaudit.googleapis.com\""
+      exclusions = {
+        exclude-noisy-reads = "protoPayload.methodName=\"storage.objects.get\""
+      }
+      subscribers = [
+        "serviceAccount:siem-ingestor@my-project.iam.gserviceaccount.com"
+      ]
+    }
+    tier-2 = {
+      filter = "resource.type=\"gce_firewall_rule\""
+      subscribers = [
+        "serviceAccount:siem-ingestor@my-project.iam.gserviceaccount.com"
+      ]
+    }
+  }
+}
+```
 
 See [Scenarios for exporting Cloud Logging data](https://cloud.google.com/architecture/exporting-stackdriver-logging-for-security-and-access-analytics) for filter examples.
 
@@ -247,7 +325,7 @@ Import Stage 0 projects and the Assured Workloads workload when an administrator
 
 Set `project_deletion_policies` to retain pre-created projects during `terraform destroy`:
 
-- Valid map keys `automation`, `billing`, and `logging` match `project_parent_ids` and default to `DELETE`.
+- Valid map keys `automation`, `billing`, `logging`, and `monitoring` match `project_parent_ids` and default to `DELETE`.
 - Setting `ABANDON` removes the project from Terraform state on destroy while still deleting stage-managed resources and liens inside the project.
 - Setting `PREVENT` blocks any Terraform destroy plan that targets the project.
 
@@ -349,8 +427,8 @@ Feature toggles in `fast_features` are experimental and not officially supported
 | [billing_account](variables.tf#L35) | Billing account id. If billing account is not part of the same org set `is_org_level` to `false`. To disable handling of billing IAM roles set `no_iam` to `true`. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
 | [bootstrap_project](variables.tf#L63) | Bootstrap project ID. | <code>string</code> | ✓ |  |
 | [kms_protection_level](variables.tf#L296) | KMS protection level. | <code>string</code> | ✓ |  |
-| [organization](variables.tf#L384) | Organization details. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
-| [prefix](variables.tf#L399) | Prefix used for resources that need unique names. Use 7 characters or less. | <code>string</code> | ✓ |  |
+| [organization](variables.tf#L441) | Organization details. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [prefix](variables.tf#L456) | Prefix used for resources that need unique names. Use 7 characters or less. | <code>string</code> | ✓ |  |
 | [assured_workloads](variables.tf#L22) | Configuration for Assured Workloads. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
 | [billing_budget_amount](variables.tf#L45) | Optional Budget configuration for the AW folder. Includes amount and optional threshold rules (defaults to 0.5, 0.75, 0.9). If null, no budget will be created. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
 | [billing_override](variables.tf#L54) | Optional billing override configuration. If set, disables service account impersonation for project billing linkage and runs under the user account using the specified quota projects. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
@@ -369,16 +447,18 @@ Feature toggles in `fast_features` are experimental and not officially supported
 | [iam_bindings_additive](variables.tf#L274) | Organization-level custom additive IAM bindings. Keys are arbitrary. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
 | [iam_by_principals](variables.tf#L289) | Authoritative IAM binding in {PRINCIPAL => [ROLES]} format. Principals need to be statically defined to avoid cycle errors. Merged internally with the `iam` variable. | <code>map&#40;list&#40;string&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
 | [locations](variables.tf#L302) | Optional locations for GCS, BigQuery, and logging buckets created here. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [log_sinks](variables.tf#L318) | Org-level log sinks, in name => {type, filter} format. Valid types: 'logging' (routes to Cloud Logging bucket with 365-day default retention), 'pubsub' (routes to Pub/Sub topic with 7-day default retention; requires an active consumer to avoid log loss), 'storage' (routes to GCS bucket), 'bigquery' (routes to BigQuery dataset). | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
-| [logging_bucket_retention](variables.tf#L354) | Retention period (in days) for the Cloud Logging buckets created for organization log exports. | <code>number</code> |  | <code>365</code> |
-| [logging_kms_key](variables.tf#L360) | value of the KMS key used for logging. | <code>string</code> |  | <code>null</code> |
-| [org_policies_config](variables.tf#L366) | Organization policies customization. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [outputs_location](variables.tf#L393) | Enable writing provider, tfvars and CI/CD workflow files to local filesystem. Leave null to disable. | <code>string</code> |  | <code>null</code> |
-| [project_deletion_policies](variables.tf#L408) | Deletion policy of each Stage 0 project. Use ABANDON for projects that you create outside Terraform and import, so terraform destroy leaves them in place. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [project_parent_ids](variables.tf#L426) | Optional parents for projects created here in folders/nnnnnnn format. Null values will use the organization as parent. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [regime_mapping](variables.tf#L437) | Mapping of compliance regime names to short codes. | <code>map&#40;string&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
-| [regions](variables.tf#L470) | Region definitions. Must be specified in terraform.tfvars. Example: us-east4 for FedRAMP High compliance. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
-| [workforce_identity_pool](variables.tf#L481) | Workforce Identity Federation pool configuration. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [log_sinks](variables.tf#L318) | Org-level log sinks, in name => {type, filter, exclusions, subscriptions} format. Valid types: 'logging' (routes to Cloud Logging bucket with 365-day default retention), 'pubsub' (routes to Pub/Sub topic with 7-day default retention; requires an active consumer to avoid log loss), 'storage' (routes to GCS bucket), 'bigquery' (routes to BigQuery dataset). | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
+| [logging_bucket_retention](variables.tf#L385) | Retention period (in days) for the Cloud Logging buckets created for organization log exports. | <code>number</code> |  | <code>365</code> |
+| [logging_kms_key](variables.tf#L391) | value of the KMS key used for logging. | <code>string</code> |  | <code>null</code> |
+| [monitoring_project](variables.tf#L397) | Optional central Cloud Monitoring scoping project configuration. Set to null to disable. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [org_policies_config](variables.tf#L423) | Organization policies customization. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [outputs_location](variables.tf#L450) | Enable writing provider, tfvars and CI/CD workflow files to local filesystem. Leave null to disable. | <code>string</code> |  | <code>null</code> |
+| [project_deletion_policies](variables.tf#L465) | Deletion policy of each Stage 0 project. Use ABANDON for projects that you create outside Terraform and import, so terraform destroy leaves them in place. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [project_parent_ids](variables.tf#L484) | Optional parents for projects created here in folders/nnnnnnn format. Null values will use the organization as parent. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [regime_mapping](variables.tf#L496) | Mapping of compliance regime names to short codes. | <code>map&#40;string&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
+| [regions](variables.tf#L529) | Region definitions. Must be specified in terraform.tfvars. Example: us-east4 for FedRAMP High compliance. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
+| [siem_export](variables.tf#L540) | Optional multi-tier, multi-region Pub/Sub SIEM log export configuration. Set to null to disable. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [workforce_identity_pool](variables.tf#L651) | Workforce Identity Federation pool configuration. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
 
 ## Outputs
 
@@ -392,11 +472,13 @@ Feature toggles in `fast_features` are experimental and not officially supported
 | [common_services_folder](outputs.tf#L165) | Common services folder where non-tenant related resources should be kept. |  |
 | [custom_roles](outputs.tf#L170) | Organization-level custom roles. |  |
 | [kms_protection_level](outputs.tf#L175) | KMS protection level. |  |
-| [outputs_bucket](outputs.tf#L180) | GCS bucket where generated output files are stored. |  |
-| [project_ids](outputs.tf#L185) | Projects created by this stage. |  |
-| [providers](outputs.tf#L195) | Terraform provider files for this stage and dependent stages. | ✓ |
-| [service_accounts](outputs.tf#L202) | Automation service accounts created by this stage. |  |
-| [tfvars](outputs.tf#L220) | Terraform variable files for the following stages. | ✓ |
-| [workforce_identity_pool](outputs.tf#L226) | Workforce Identity Federation pool. |  |
-| [workload_identity_pool](outputs.tf#L235) | Workload Identity Federation pool and providers. |  |
+| [monitoring_project_id](outputs.tf#L180) | Central Cloud Monitoring scoping project ID, or null when disabled. |  |
+| [outputs_bucket](outputs.tf#L185) | GCS bucket where generated output files are stored. |  |
+| [project_ids](outputs.tf#L190) | Projects created by this stage. |  |
+| [providers](outputs.tf#L201) | Terraform provider files for this stage and dependent stages. | ✓ |
+| [service_accounts](outputs.tf#L208) | Automation service accounts created by this stage. |  |
+| [siem_export](outputs.tf#L216) | Tiered regional SIEM Pub/Sub topic and subscription IDs. |  |
+| [tfvars](outputs.tf#L236) | Terraform variable files for the following stages. | ✓ |
+| [workforce_identity_pool](outputs.tf#L242) | Workforce Identity Federation pool. |  |
+| [workload_identity_pool](outputs.tf#L251) | Workload Identity Federation pool and providers. |  |
 <!-- END TFDOC -->

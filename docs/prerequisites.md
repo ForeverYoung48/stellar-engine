@@ -69,10 +69,9 @@ Terraform.
 > [!TIP]
 > Run [`./fast/stages-aw/0-bootstrap/enableServices.sh`](../fast/stages-aw/0-bootstrap/enableServices.sh)
 > from the repository root after setting the active `gcloud` project to enable
-> the 11 core Stage 0 APIs automatically, then run
-> `gcloud services enable monitoring.googleapis.com` for the Cloud Monitoring
-> API. Alternatively, enable each service listed below manually in the console
-> or with the `gcloud services enable` command.
+> the 12 core Stage 0 APIs automatically. Alternatively, enable each service
+> listed below manually in the console or with the `gcloud services enable`
+> command.
 
 The `enableServices.sh` script enables these services:
 
@@ -85,11 +84,9 @@ The `enableServices.sh` script enables these services:
 - `assuredworkloads.googleapis.com`
 - `cloudbilling.googleapis.com`
 - `logging.googleapis.com`
+- `monitoring.googleapis.com`
 - `iamcredentials.googleapis.com`
 - `orgpolicy.googleapis.com`
-
-Also enable the `monitoring.googleapis.com` API in the bootstrap project before
-running Stage 0.
 
 ## Initial IAM Grants
 

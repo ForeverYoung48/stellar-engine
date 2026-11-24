@@ -63,7 +63,7 @@ class TestBootstrapDeletionPolicy(unittest.TestCase):
                 )
 
     def test_every_key_defaults_to_delete(self):
-        keys = {key for _, _, key in _PROJECT_BLOCKS}
+        keys = {key for _, _, key in _PROJECT_BLOCKS} | {"monitoring"}
         defaults = dict(
             re.findall(
                 r'(\w+)\s*=\s*optional\(string,\s*"(\w+)"\)', self.variable
@@ -72,6 +72,14 @@ class TestBootstrapDeletionPolicy(unittest.TestCase):
         self.assertEqual(defaults, dict.fromkeys(keys, "DELETE"))
         self.assertRegex(self.variable, r"\n\s*default\s*=\s*\{\}\n")
         self.assertRegex(self.variable, r"\n\s*nullable\s*=\s*false\n")
+
+    def test_monitoring_project_coalesces_deletion_policy(self):
+        monitoring_tf = _read(_BOOTSTRAP_DIR / "monitoring.tf")
+        self.assertRegex(
+            monitoring_tf,
+            r"coalesce\(\s*var\.monitoring_project\.deletion_policy,\s*"
+            r"var\.project_deletion_policies\.monitoring\s*\)",
+        )
 
     def test_validation_matches_project_module_values(self):
         module_variable = _block(

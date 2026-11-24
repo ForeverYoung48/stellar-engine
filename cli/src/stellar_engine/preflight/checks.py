@@ -48,8 +48,8 @@ DOC_FEATURES = "docs/prerequisites.md#organization-features-and-quotas"
 DOC_TROUBLESHOOTING = "docs/ddg.md#appendices"
 DDG_STAGE0 = "docs/ddg.md#stage-0---bootstrap"
 
-# DDG prerequisite that enableServices.sh does not cover yet.
-EXTRA_APIS = ("monitoring.googleapis.com",)
+# DDG prerequisites that enableServices.sh does not cover yet.
+EXTRA_APIS: tuple[str, ...] = ()
 BILLING_ADMIN_ROLE = "roles/billing.admin"
 # Lets Stage 0 create projects on a billing account whose IAM it does not
 # manage, which is what Billing Account User grants.
@@ -1201,7 +1201,7 @@ def check_project(ctx):
             doc=DOC_BOOTSTRAP,
         )
     ]
-    required = [*ctx.repo.required_apis(), *EXTRA_APIS]
+    required = list(dict.fromkeys([*ctx.repo.required_apis(), *EXTRA_APIS]))
     try:
         enabled = ctx.cloud.enabled_services(project)
     except api.CloudError as error:

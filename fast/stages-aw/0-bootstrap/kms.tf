@@ -41,9 +41,9 @@ module "logging-kms" {
   }
 
   iam_bindings_additive = merge(
-    contains(local.log_types, "pubsub") ? {
+    local.has_pubsub_export ? {
       "pubsub" = {
-        member = "serviceAccount:service-${module.log-export-project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+        member = module.log-export-project.service_agents["pubsub"].iam_email
         role   = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
       }
     } : {},

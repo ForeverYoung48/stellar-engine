@@ -316,10 +316,17 @@ variable "locations" {
 # for additional logging filter examples
 
 variable "log_sinks" {
-  description = "Org-level log sinks, in name => {type, filter} format. Valid types: 'logging' (routes to Cloud Logging bucket with 365-day default retention), 'pubsub' (routes to Pub/Sub topic with 7-day default retention; requires an active consumer to avoid log loss), 'storage' (routes to GCS bucket), 'bigquery' (routes to BigQuery dataset)."
+  description = "Org-level log sinks, in name => {type, filter, exclusions, subscriptions} format. Valid types: 'logging' (routes to Cloud Logging bucket with 365-day default retention), 'pubsub' (routes to Pub/Sub topic with 7-day default retention; requires an active consumer to avoid log loss), 'storage' (routes to GCS bucket), 'bigquery' (routes to BigQuery dataset)."
   type = map(object({
-    filter = string
-    type   = string
+    exclusions = optional(map(string), {})
+    filter     = string
+    subscriptions = optional(map(object({
+      ack_deadline_seconds       = optional(number, 60)
+      expiration_policy_ttl      = optional(string, "")
+      message_retention_duration = optional(string, "604800s")
+      subscribers                = optional(list(string), [])
+    })), {})
+    type = string
   }))
   default = {
 
@@ -349,6 +356,30 @@ variable "log_sinks" {
     ])
     error_message = "Type must be one of 'bigquery', 'logging', 'pubsub', 'storage'."
   }
+  validation {
+    condition = alltrue([
+      for k, v in var.log_sinks : (
+        v.type == "pubsub" ||
+        length(v.subscriptions == null ? {} : v.subscriptions) == 0
+      )
+    ])
+    error_message = "Subscriptions can only be configured on log sinks with type 'pubsub'."
+  }
+  validation {
+    condition = alltrue(flatten([
+      for k, v in var.log_sinks : [
+        for sk, sv in(v.subscriptions == null ? {} : v.subscriptions) : (
+          sv.ack_deadline_seconds == null
+          ? true
+          : (
+            sv.ack_deadline_seconds >= 10 &&
+            sv.ack_deadline_seconds <= 600
+          )
+        )
+      ]
+    ]))
+    error_message = "Subscription ack_deadline_seconds must be between 10 and 600."
+  }
 }
 
 variable "logging_bucket_retention" {
@@ -361,6 +392,32 @@ variable "logging_kms_key" {
   description = "value of the KMS key used for logging."
   type        = string
   default     = null
+}
+
+variable "monitoring_project" {
+  description = "Optional central Cloud Monitoring scoping project configuration. Set to null to disable."
+  type = object({
+    deletion_policy     = optional(string)
+    monitored_projects  = optional(list(string), [])
+    name                = optional(string, "monitoring-0")
+    parent_id           = optional(string)
+    scope_core_projects = optional(bool, true)
+  })
+  default = null
+  validation {
+    condition = (
+      var.monitoring_project == null
+      ? true
+      : (
+        var.monitoring_project.deletion_policy == null ||
+        contains(
+          ["ABANDON", "DELETE", "PREVENT"],
+          var.monitoring_project.deletion_policy
+        )
+      )
+    )
+    error_message = "monitoring_project.deletion_policy must be one of 'ABANDON', 'DELETE', 'PREVENT'."
+  }
 }
 
 variable "org_policies_config" {
@@ -411,6 +468,7 @@ variable "project_deletion_policies" {
     automation = optional(string, "DELETE")
     billing    = optional(string, "DELETE")
     logging    = optional(string, "DELETE")
+    monitoring = optional(string, "DELETE")
   })
   nullable = false
   default  = {}
@@ -429,6 +487,7 @@ variable "project_parent_ids" {
     automation = optional(string)
     billing    = optional(string)
     logging    = optional(string)
+    monitoring = optional(string)
   })
   default  = {}
   nullable = false
@@ -475,6 +534,117 @@ variable "regions" {
   nullable = false
   default = {
     primary = "us-east4"
+  }
+}
+
+variable "siem_export" {
+  description = "Optional multi-tier, multi-region Pub/Sub SIEM log export configuration. Set to null to disable."
+  type = object({
+    ack_deadline_seconds       = optional(number, 60)
+    expiration_policy_ttl      = optional(string, "")
+    kms_keys                   = optional(map(string), {})
+    manage_kms_iam             = optional(bool, true)
+    message_retention_duration = optional(string, "604800s")
+    regions                    = list(string)
+    tiers = map(object({
+      exclusions  = optional(map(string), {})
+      filter      = string
+      subscribers = optional(list(string), [])
+    }))
+  })
+  default = null
+  validation {
+    condition = (
+      var.siem_export == null
+      ? true
+      : (
+        var.siem_export.ack_deadline_seconds == null
+        ? true
+        : (
+          var.siem_export.ack_deadline_seconds >= 10 &&
+          var.siem_export.ack_deadline_seconds <= 600
+        )
+      )
+    )
+    error_message = "siem_export.ack_deadline_seconds must be between 10 and 600."
+  }
+  validation {
+    condition = (
+      var.siem_export == null
+      ? true
+      : length(var.siem_export.regions) > 0
+    )
+    error_message = "siem_export.regions must contain at least one region."
+  }
+  validation {
+    condition = (
+      var.siem_export == null
+      ? true
+      : (
+        length(var.siem_export.regions) ==
+        length(distinct(var.siem_export.regions))
+      )
+    )
+    error_message = "siem_export.regions must not contain duplicate regions."
+  }
+  validation {
+    condition = (
+      var.siem_export == null
+      ? true
+      : length(var.siem_export.tiers) > 0
+    )
+    error_message = "siem_export.tiers must contain at least one tier."
+  }
+  validation {
+    condition = (
+      var.siem_export == null
+      ? true
+      : alltrue([
+        for region in var.siem_export.regions : (
+          region == var.regions.primary ||
+          try(
+            length(trimspace(var.siem_export.kms_keys[region])) > 0,
+            false
+          )
+        )
+      ])
+    )
+    error_message = "Every region in siem_export.regions other than regions.primary must have a regional KMS key in siem_export.kms_keys."
+  }
+  validation {
+    condition = (
+      var.siem_export == null
+      ? true
+      : alltrue([
+        for region, key in(
+          var.siem_export.kms_keys == null ? {} : var.siem_export.kms_keys
+          ) : (
+          key == null
+          ? false
+          : can(regex(
+            format(
+              "^projects/[^/]+/locations/%s/keyRings/[^/]+/cryptoKeys/[^/]+$",
+              region
+            ),
+            key
+          ))
+        )
+      ])
+    )
+    error_message = "Each siem_export.kms_keys entry must be a full CryptoKey ID whose /locations/<region>/ segment matches its map key."
+  }
+  validation {
+    condition = (
+      var.siem_export == null
+      ? true
+      : alltrue([
+        for pair in setproduct(
+          keys(var.siem_export.tiers),
+          var.siem_export.regions
+        ) : !contains(keys(var.log_sinks), "siem-${pair[0]}-${pair[1]}")
+      ])
+    )
+    error_message = "SIEM export sink names ('siem-<tier>-<region>') must not collide with keys in log_sinks."
   }
 }
 

@@ -177,6 +177,11 @@ output "kms_protection_level" {
   value       = local.kms_protection_level
 }
 
+output "monitoring_project_id" {
+  description = "Central Cloud Monitoring scoping project ID, or null when disabled."
+  value       = try(module.monitoring-project[0].project_id, null)
+}
+
 output "outputs_bucket" {
   description = "GCS bucket where generated output files are stored."
   value       = module.automation-tf-output-gcs.name
@@ -188,6 +193,7 @@ output "project_ids" {
     automation     = module.automation-project.project_id
     billing-export = try(module.billing-export-project[0].project_id, null)
     log-export     = module.log-export-project.project_id
+    monitoring     = try(module.monitoring-project[0].project_id, null)
   }
 }
 
@@ -204,6 +210,16 @@ output "service_accounts" {
   value = {
     bootstrap = module.automation-tf-bootstrap-sa.email
     resman    = module.automation-tf-resman-sa.email
+  }
+}
+
+output "siem_export" {
+  description = "Tiered regional SIEM Pub/Sub topic and subscription IDs."
+  value = {
+    for k, v in module.siem-export-pubsub : k => {
+      subscriptions = v.subscription_id
+      topic_id      = v.id
+    }
   }
 }
 

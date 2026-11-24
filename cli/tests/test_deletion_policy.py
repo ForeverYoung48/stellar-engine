@@ -14,6 +14,8 @@
 
 """Tests for keeping imported Stage 0 projects on destroy."""
 
+import re
+
 import pytest
 
 import conftest
@@ -96,9 +98,10 @@ def test_default_policy_follows_the_variable_type(policy_repo):
     variables = policy_repo.bootstrap_dir / "variables.tf"
     text = variables.read_text(encoding="utf-8")
     variables.write_text(
-        text.replace(
-            'optional(string, "DELETE")\n  })',
-            'optional(string, "PREVENT")\n  })',
+        re.sub(
+            r'(logging\s*=\s*optional\(string,\s*)"DELETE"\)',
+            r'\1"PREVENT")',
+            text,
         ),
         encoding="utf-8",
     )

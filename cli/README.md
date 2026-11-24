@@ -393,7 +393,7 @@ order of the DDG prerequisites section.
 - A run without `answers.yaml` has no import blocks, so it lists every
   resource as missing.
 - The bootstrap project is active and has every API that
-  `fast/stages-aw/0-bootstrap/enableServices.sh` enables, plus the Cloud
+  `fast/stages-aw/0-bootstrap/enableServices.sh` enables, including the Cloud
   Monitoring API that the DDG requires.
 - The Stage 0 administrative groups exist in Cloud Identity, and preflight
   resolves them from the `groups` variable the same way Stage 0 does.

@@ -83,7 +83,8 @@ def test_ddg_requires_monitoring_api(repo):
     assert "/apis/api/monitoring.googleapis.com/overview" in _ddg_prerequisites(
         repo.root
     )
-    assert checks.EXTRA_APIS == ("monitoring.googleapis.com",)
+    assert "monitoring.googleapis.com" in repo.required_apis()
+    assert checks.EXTRA_APIS == ()
 
 
 def test_prefix_limit_matches_resman(repo):
@@ -542,6 +543,9 @@ def test_billing_resources_cover_every_billing_account_use(repo):
     budget = f"module.{repo_lib.BUDGET_MODULE}"
     assert budget in passing
     passing.discard(budget)
+    monitoring = f"module.{repo_lib.MONITORING_MODULE}"
+    assert monitoring in passing
+    passing.discard(monitoring)
     resources = repo.billing_resources(
         prefix="abc",
         regime="IL5",
@@ -637,6 +641,18 @@ def test_budget_module_follows_the_budget_variable(repo):
     ]
     assert "var.billing_budget_amount != null" in str(body["count"])
     assert "var.billing_account.id" in str(body["id"])
+
+
+def test_monitoring_module_follows_the_monitoring_variable(repo):
+    # Stage 0 creates the central monitoring project only when opt-in
+    # `monitoring_project` is set.
+    (body,) = [
+        body
+        for filename, label, body in _bootstrap_blocks(repo, "module")
+        if hcl.unquote(label) == repo_lib.MONITORING_MODULE
+    ]
+    assert "var.monitoring_project != null" in str(body["count"])
+    assert "var.billing_account.id" in str(body["billing_account"])
 
 
 @pytest.mark.parametrize(

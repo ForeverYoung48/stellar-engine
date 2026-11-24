@@ -119,6 +119,9 @@ WORKLOAD_INPUT_ONLY = (
 # The Stage 0 module that creates a budget on the billing account when the
 # `billing_budget_amount` variable is set.
 BUDGET_MODULE = "billing-account-budget"
+# The Stage 0 module that creates an opt-in central Cloud Monitoring scoping
+# project when `monitoring_project` is set.
+MONITORING_MODULE = "monitoring-project"
 # Newer Stage 0 versions declare this object variable and pass one of its
 # keys to the `deletion_policy` of each project module.
 PROJECT_DELETION_POLICIES = "project_deletion_policies"

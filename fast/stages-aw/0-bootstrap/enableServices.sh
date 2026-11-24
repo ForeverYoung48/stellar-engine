@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-list_of_services="iam cloudkms pubsub serviceusage cloudresourcemanager bigquery assuredworkloads cloudbilling logging iamcredentials orgpolicy"
+list_of_services="iam cloudkms pubsub serviceusage cloudresourcemanager bigquery assuredworkloads cloudbilling logging monitoring iamcredentials orgpolicy"
 
 for service in ${list_of_services}; do
   echo "Enabling ${service}.googleapis.com..."
   gcloud services enable "${service}.googleapis.com"
 done
 
-# printf "%s\n" iam cloudkms pubsub serviceusage cloudresourcemanager bigquery assuredworkloads cloudbilling logging iamcredentials orgpolicy | xargs -I {} gcloud services enable "{}.googleapis.com"
+# printf "%s\n" iam cloudkms pubsub serviceusage cloudresourcemanager bigquery assuredworkloads cloudbilling logging monitoring iamcredentials orgpolicy | xargs -I {} gcloud services enable "{}.googleapis.com"

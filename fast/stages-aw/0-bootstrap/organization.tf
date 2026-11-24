@@ -489,14 +489,9 @@ module "organization" {
       : null
     )
   }
-  logging_sinks = !var.deploy_org_resources.logging_sinks ? {} : {
-    for name, attrs in var.log_sinks : name => {
-      bq_partitioned_table = attrs.type == "bigquery"
-      destination          = local.log_sink_destinations[name].id
-      filter               = attrs.filter
-      type                 = attrs.type
-    }
-  }
+  logging_sinks = (
+    var.deploy_org_resources.logging_sinks ? local.all_logging_sinks : {}
+  )
   org_policies = (
     !var.deploy_org_resources.org_policies || var.bootstrap_user != null
     ? null
@@ -582,14 +577,9 @@ module "root-folder-config" {
       }
     }
   }
-  logging_sinks = var.deploy_org_resources.logging_sinks ? {} : {
-    for name, attrs in var.log_sinks : name => {
-      bq_partitioned_table = attrs.type == "bigquery"
-      destination          = local.log_sink_destinations[name].id
-      filter               = attrs.filter
-      type                 = attrs.type
-    }
-  }
+  logging_sinks = (
+    var.deploy_org_resources.logging_sinks ? {} : local.all_logging_sinks
+  )
   org_policies = (
     var.deploy_org_resources.org_policies || var.bootstrap_user != null
     ? null

@@ -17,6 +17,44 @@
 # tfdoc:file:description Audit log project and sink.
 
 locals {
+  all_logging_sinks = merge(
+    {
+      for name, attrs in var.log_sinks : name => {
+        bq_partitioned_table = attrs.type == "bigquery"
+        destination          = local.log_sink_destinations[name].id
+        exclusions           = attrs.exclusions == null ? {} : attrs.exclusions
+        filter               = attrs.filter
+        type                 = attrs.type
+      }
+    },
+    {
+      for key, cfg in local.siem_export_topics : "siem-${key}" => {
+        bq_partitioned_table = false
+        destination          = module.siem-export-pubsub[key].id
+        exclusions           = cfg.exclusions
+        filter               = cfg.filter
+        type                 = "pubsub"
+      }
+    }
+  )
+  has_pubsub_export = (
+    contains(local.log_types, "pubsub") ||
+    length(local.siem_export_topics) > 0
+  )
+  log_export_pubsub_sinks = {
+    for k, v in var.log_sinks : k => {
+      for sk, sv in(v.subscriptions == null ? {} : v.subscriptions) : sk => {
+        ack_deadline_seconds       = sv.ack_deadline_seconds
+        expiration_policy_ttl      = sv.expiration_policy_ttl
+        message_retention_duration = sv.message_retention_duration
+        iam = (
+          length(sv.subscribers == null ? [] : sv.subscribers) > 0
+          ? { "roles/pubsub.subscriber" = sv.subscribers }
+          : {}
+        )
+      }
+    } if v.type == "pubsub"
+  }
   log_sink_destinations = merge(
     # use the same dataset for all sinks with `bigquery` as  destination
     {
@@ -34,6 +72,64 @@ locals {
     module.log-export-logbucket
   )
   log_types = toset([for k, v in var.log_sinks : v.type])
+  logging_kms_key = coalesce(
+    var.logging_kms_key, module.logging-kms.key_ids["log-sink"]
+  )
+  siem_export_kms_iam_keys = (
+    var.siem_export == null
+    ? toset([])
+    : (
+      coalesce(var.siem_export.manage_kms_iam, true)
+      ? toset(compact(values(
+        var.siem_export.kms_keys == null
+        ? {}
+        : var.siem_export.kms_keys
+      )))
+      : toset([])
+    )
+  )
+  siem_export_topics = var.siem_export == null ? {} : {
+    for pair in setproduct(
+      keys(var.siem_export.tiers),
+      var.siem_export.regions
+      ) : "${pair[0]}-${pair[1]}" => {
+      exclusions = (
+        var.siem_export.tiers[pair[0]].exclusions == null
+        ? {}
+        : var.siem_export.tiers[pair[0]].exclusions
+      )
+      filter = var.siem_export.tiers[pair[0]].filter
+      kms_key = (
+        try(var.siem_export.kms_keys[pair[1]], null) != null
+        ? var.siem_export.kms_keys[pair[1]]
+        : (pair[1] == local.locations.kms ? local.logging_kms_key : null)
+      )
+      region = pair[1]
+      subscriptions = {
+        "siem-${pair[0]}-${pair[1]}-sub" = {
+          ack_deadline_seconds  = var.siem_export.ack_deadline_seconds
+          expiration_policy_ttl = var.siem_export.expiration_policy_ttl
+          message_retention_duration = (
+            var.siem_export.message_retention_duration
+          )
+          iam = (
+            length(
+              var.siem_export.tiers[pair[0]].subscribers == null
+              ? []
+              : var.siem_export.tiers[pair[0]].subscribers
+            ) > 0
+            ? {
+              "roles/pubsub.subscriber" = (
+                var.siem_export.tiers[pair[0]].subscribers
+              )
+            }
+            : {}
+          )
+        }
+      }
+      tier = pair[0]
+    }
+  }
 }
 
 module "log-export-project" {
@@ -54,18 +150,21 @@ module "log-export-project" {
     "roles/owner"  = [module.automation-tf-bootstrap-sa.iam_email]
     "roles/viewer" = [module.automation-tf-bootstrap-r-sa.iam_email]
   }
-  services = [
-    # "cloudresourcemanager.googleapis.com",
-    # "iam.googleapis.com",
-    # "serviceusage.googleapis.com",
-    "bigquery.googleapis.com",
-    "storage.googleapis.com",
-    "stackdriver.googleapis.com",
-    "cloudkms.googleapis.com",
-    "pubsub.googleapis.com",
-    "compute.googleapis.com",
-    "logging.googleapis.com"
-  ]
+  services = concat(
+    [
+      # "cloudresourcemanager.googleapis.com",
+      # "iam.googleapis.com",
+      # "serviceusage.googleapis.com",
+      "bigquery.googleapis.com",
+      "storage.googleapis.com",
+      "stackdriver.googleapis.com",
+      "cloudkms.googleapis.com",
+      "pubsub.googleapis.com",
+      "compute.googleapis.com",
+      "logging.googleapis.com"
+    ],
+    var.monitoring_project != null ? ["monitoring.googleapis.com"] : []
+  )
   depends_on = [module.organization-logging]
 }
 
@@ -99,7 +198,7 @@ module "log-export-dataset" {
   id             = "logs"
   friendly_name  = "Audit logs export."
   location       = local.locations.bq
-  encryption_key = coalesce(var.logging_kms_key, module.logging-kms.key_ids["log-sink"])
+  encryption_key = local.logging_kms_key
   depends_on     = [module.logging-kms]
 }
 
@@ -112,7 +211,7 @@ module "log-export-gcs" {
   location       = local.locations.gcs
   storage_class  = local.gcs_storage_class
   force_destroy  = var.force_destroy
-  encryption_key = coalesce(var.logging_kms_key, module.logging-kms.key_ids["log-sink"])
+  encryption_key = local.logging_kms_key
   depends_on     = [module.logging-kms]
 }
 
@@ -124,7 +223,7 @@ module "log-export-logbucket" {
   name          = each.key
   location      = local.locations.logging
   log_analytics = { enable = true }
-  kms_key_name  = coalesce(var.logging_kms_key, module.logging-kms.key_ids["log-sink"])
+  kms_key_name  = local.logging_kms_key
   retention     = var.logging_bucket_retention
   # org-level and project-level logging settings ready before we create any logging buckets
   depends_on = [
@@ -135,11 +234,35 @@ module "log-export-logbucket" {
 }
 
 module "log-export-pubsub" {
-  source     = "../../../modules/pubsub"
-  for_each   = toset([for k, v in var.log_sinks : k if v.type == "pubsub"])
-  project_id = module.log-export-project.project_id
-  name       = each.key
-  regions    = local.locations.pubsub
-  kms_key    = coalesce(var.logging_kms_key, module.logging-kms.key_ids["log-sink"])
-  depends_on = [module.logging-kms]
+  source        = "../../../modules/pubsub"
+  for_each      = local.log_export_pubsub_sinks
+  project_id    = module.log-export-project.project_id
+  name          = each.key
+  regions       = local.locations.pubsub
+  kms_key       = local.logging_kms_key
+  subscriptions = each.value
+  depends_on    = [module.logging-kms]
+}
+
+resource "google_kms_crypto_key_iam_member" "siem_export_pubsub" {
+  for_each      = local.siem_export_kms_iam_keys
+  crypto_key_id = each.key
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member = (
+    module.log-export-project.service_agents["pubsub"].iam_email
+  )
+}
+
+module "siem-export-pubsub" {
+  source        = "../../../modules/pubsub"
+  for_each      = local.siem_export_topics
+  project_id    = module.log-export-project.project_id
+  name          = "siem-${each.key}"
+  regions       = [each.value.region]
+  kms_key       = each.value.kms_key
+  subscriptions = each.value.subscriptions
+  depends_on = [
+    module.logging-kms,
+    google_kms_crypto_key_iam_member.siem_export_pubsub,
+  ]
 }
