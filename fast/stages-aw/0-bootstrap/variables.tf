@@ -167,6 +167,17 @@ variable "enable_tenant_sod_roles" {
   default     = false
 }
 
+variable "env" {
+  description = "Short environment identifier combined with prefix for globally unique resource names."
+  type        = string
+  default     = "prod"
+  nullable    = false
+  validation {
+    condition     = can(regex("^[a-z]([a-z0-9-]{0,4}[a-z0-9])?$", var.env))
+    error_message = "Environment must be 1 to 6 lowercase alphanumeric characters or hyphens, starting with a letter and ending with a letter or digit."
+  }
+}
+
 variable "essential_contacts" {
   description = "Email or map of emails to notification category lists used for essential contacts, unset if null or empty."
   type        = any

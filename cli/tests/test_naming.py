@@ -47,8 +47,15 @@ def test_stage0_names():
     assert (
         naming.stage0_project_id("tst", "iac-core-0") == "tst-prod-iac-core-0"
     )
+    assert (
+        naming.stage0_project_id("tst", "iac-core-0", env="dev")
+        == "tst-dev-iac-core-0"
+    )
     assert naming.automation_sa_email("tst", "bootstrap-0") == (
         "tst-prod-bootstrap-0@tst-prod-iac-core-0.iam.gserviceaccount.com"
+    )
+    assert naming.automation_sa_email("tst", "bootstrap-0", env="dev") == (
+        "tst-dev-bootstrap-0@tst-dev-iac-core-0.iam.gserviceaccount.com"
     )
     assert [
         naming.state_bucket("tst", name) for name in naming.STATE_BUCKET_NAMES
@@ -57,11 +64,22 @@ def test_stage0_names():
         "tst-prod-iac-core-outputs-0",
         "tst-prod-iac-core-resman-0",
     ]
+    assert [
+        naming.state_bucket("tst", name, env="dev")
+        for name in naming.STATE_BUCKET_NAMES
+    ] == [
+        "tst-dev-iac-core-bootstrap-0",
+        "tst-dev-iac-core-outputs-0",
+        "tst-dev-iac-core-resman-0",
+    ]
 
 
 def test_stage0_names_match_automation(repo):
     main = _bootstrap_text(repo, "main.tf")
-    assert 'prefix = join("-", compact([var.prefix, "prod"]))' in main
+    assert 'prefix = join("-", compact([var.prefix, var.env]))' in main
+    variables = _bootstrap_text(repo, "variables.tf")
+    assert 'variable "env"' in variables
+    assert 'default     = "prod"' in variables
     automation = _bootstrap_text(repo, "automation.tf")
     assert f'name                    = "{naming.AUTOMATION_PROJECT_NAME}"' in (
         automation
@@ -104,9 +122,13 @@ def test_principal_email():
 
 def test_workload_folder_name_matches_stage0(repo):
     assert naming.workload_folder_name("tst") == "StellarEngine-tst"
-    assert 'display_name                 = "StellarEngine-${var.prefix}"' in (
-        _bootstrap_text(repo, "organization.tf")
+    assert naming.workload_folder_name("tst", env="dev") == (
+        "StellarEngine-tst-dev"
     )
+    org_tf = _bootstrap_text(repo, "organization.tf")
+    assert "display_name                 = local.enclave_display_name" in org_tf
+    assert '? "StellarEngine-${var.prefix}"' in org_tf
+    assert ': "StellarEngine-${local.prefix}"' in org_tf
 
 
 def test_tenant_ids():

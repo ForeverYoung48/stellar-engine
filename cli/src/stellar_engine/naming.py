@@ -55,20 +55,22 @@ def kms_protection_level(regime: str, explicit: str | None = None) -> str:
     return "HSM"
 
 
-def stage0_project_id(prefix: str, name: str) -> str:
-    """Returns the ID of a Stage 0 project, `<prefix>-prod-<name>`.
+def stage0_project_id(prefix: str, name: str, env: str = "prod") -> str:
+    """Returns the ID of a Stage 0 project, `<prefix>-<env>-<name>`.
 
     Mirrors the `modules/project` calls in `0-bootstrap`, which join
-    `local.prefix`, `<prefix>-prod`, and the `name` with a hyphen.
+    `local.prefix`, `<prefix>-<env>` (defaulting to `<prefix>-prod`),
+    and the `name` with a hyphen.
 
     Args:
         prefix: Deployment prefix.
         name: Project name, such as `iac-core-0`.
+        env: Environment token, defaulting to `prod`.
     """
-    return f"{prefix}-prod-{name}"
+    return f"{prefix}-{env}-{name}"
 
 
-def automation_sa_email(prefix: str, name: str) -> str:
+def automation_sa_email(prefix: str, name: str, env: str = "prod") -> str:
     """Returns the email of a Stage 0 automation service account.
 
     Mirrors the `modules/iam-service-account` calls in
@@ -77,23 +79,25 @@ def automation_sa_email(prefix: str, name: str) -> str:
     Args:
         prefix: Deployment prefix.
         name: Service account name, such as `bootstrap-0`.
+        env: Environment token, defaulting to `prod`.
     """
-    account = stage0_project_id(prefix, name)
-    project = stage0_project_id(prefix, AUTOMATION_PROJECT_NAME)
+    account = stage0_project_id(prefix, name, env=env)
+    project = stage0_project_id(prefix, AUTOMATION_PROJECT_NAME, env=env)
     return f"{account}@{project}.iam{SERVICE_ACCOUNT_SUFFIX}"
 
 
-def state_bucket(prefix: str, name: str) -> str:
+def state_bucket(prefix: str, name: str, env: str = "prod") -> str:
     """Returns the name of a Stage 0 state bucket.
 
     Mirrors the `modules/gcs` calls in `0-bootstrap/automation.tf`, whose
-    `iac-core-<name>-0` names get the `<prefix>-prod` prefix.
+    `iac-core-<name>-0` names get the `<prefix>-<env>` prefix.
 
     Args:
         prefix: Deployment prefix.
         name: Bucket name from `STATE_BUCKET_NAMES`, such as `outputs`.
+        env: Environment token, defaulting to `prod`.
     """
-    return f"{prefix}-prod-iac-core-{name}-0"
+    return f"{prefix}-{env}-iac-core-{name}-0"
 
 
 def group_name(
@@ -138,16 +142,18 @@ def principal_email(principal: str) -> str:
     return principal.split(":", 1)[1]
 
 
-def workload_folder_name(prefix: str) -> str:
+def workload_folder_name(prefix: str, env: str = "prod") -> str:
     """Returns the display name of the Assured Workloads folder.
 
-    Mirrors `display_name = "StellarEngine-${var.prefix}"` in
-    `0-bootstrap/organization.tf`.
+    Mirrors `local.enclave_display_name` in `0-bootstrap/organization.tf`.
 
     Args:
         prefix: Deployment prefix.
+        env: Environment token, defaulting to `prod`.
     """
-    return f"StellarEngine-{prefix}"
+    if env == "prod":
+        return f"StellarEngine-{prefix}"
+    return f"StellarEngine-{prefix}-{env}"
 
 
 def _tenant_env_key(env, tenant):

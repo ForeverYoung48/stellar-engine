@@ -17,6 +17,27 @@
 # tfdoc:file:description Organization-level IAM bindings locals.
 
 locals {
+  org_only_roles = [
+    "roles/accesscontextmanager.policyAdmin",
+    "roles/assuredworkloads.admin",
+    "roles/axt.admin",
+    "roles/billing.admin",
+    "roles/billing.costsManager",
+    "roles/billing.creator",
+    "roles/billing.user",
+    "roles/billing.viewer",
+    "roles/cloudsupport.admin",
+    "roles/iam.organizationRoleAdmin",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.workforcePoolAdmin",
+    "roles/orgpolicy.policyAdmin",
+    "roles/orgpolicy.policyViewer",
+    "roles/resourcemanager.organizationAdmin",
+  ]
+  _root_folder_iam_bindings_additive = {
+    for k, v in local.iam_bindings_additive : k => v
+    if !contains(local.org_only_roles, v.role)
+  }
   iam_bindings_additive = merge(
     # network and security
     {

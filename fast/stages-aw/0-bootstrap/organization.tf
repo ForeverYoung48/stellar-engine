@@ -236,13 +236,13 @@ module "organization-logging" {
 resource "google_assured_workloads_workload" "primary" {
   count                        = var.assured_workloads.regime != "COMPLIANCE_REGIME_UNSPECIFIED" ? 1 : 0
   compliance_regime            = var.assured_workloads.regime
-  display_name                 = "StellarEngine-${var.prefix}"
+  display_name                 = local.enclave_display_name
   location                     = var.assured_workloads.location
   organization                 = var.organization.id
   billing_account              = var.billing_account.id != null && var.billing_account.id != "" ? "billingAccounts/${var.billing_account.id}" : null
   provisioned_resources_parent = ""
   resource_settings {
-    display_name  = "StellarEngine-${var.prefix}"
+    display_name  = local.enclave_display_name
     resource_type = "CONSUMER_FOLDER"
   }
 
@@ -260,11 +260,16 @@ module "no-compliance-folder" {
   count      = var.assured_workloads.regime == "COMPLIANCE_REGIME_UNSPECIFIED" ? 1 : 0
   source     = "../../../modules/folder"
   parent     = "organizations/${var.organization.id}"
-  name       = "StellarEngine-${var.prefix}"
+  name       = local.enclave_display_name
   depends_on = [module.organization-logging]
 }
 
 locals {
+  enclave_display_name = (
+    var.env == "prod"
+    ? "StellarEngine-${var.prefix}"
+    : "StellarEngine-${local.prefix}"
+  )
   assured_workload_folder = var.assured_workloads.regime != "COMPLIANCE_REGIME_UNSPECIFIED" ? (
     try(
       format("folders/%s", one([

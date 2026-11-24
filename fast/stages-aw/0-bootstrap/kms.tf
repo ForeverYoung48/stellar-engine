@@ -13,6 +13,13 @@
 # limitations under the License.
 
 locals {
+  gcs_kms_sa_domain = "${local.prefix}-iac-core-0.iam.gserviceaccount.com"
+  gcs_kms_resman_sa = (
+    "serviceAccount:${local.prefix}-resman-0@${local.gcs_kms_sa_domain}"
+  )
+  gcs_kms_resman_r_sa = (
+    "serviceAccount:${local.prefix}-resman-0r@${local.gcs_kms_sa_domain}"
+  )
   kms_protection_level = coalesce(var.kms_protection_level, var.assured_workloads.regime == "FEDRAMP_MODERATE" ? "SOFTWARE" : "HSM")
   version_template = {
     algorithm        = "GOOGLE_SYMMETRIC_ENCRYPTION"
@@ -84,10 +91,10 @@ module "gcs-kms" {
       "serviceAccount:service-${module.automation-project.number}@gs-project-accounts.iam.gserviceaccount.com",
     ],
     "roles/cloudkms.admin" = [
-      "serviceAccount:${var.prefix}-prod-resman-0@${var.prefix}-prod-iac-core-0.iam.gserviceaccount.com"
+      local.gcs_kms_resman_sa
     ]
     "roles/cloudkms.viewer" = [
-      "serviceAccount:${var.prefix}-prod-resman-0r@${var.prefix}-prod-iac-core-0.iam.gserviceaccount.com"
+      local.gcs_kms_resman_r_sa
     ]
   }
 }

@@ -512,10 +512,16 @@ def test_assured_workload_matches_organization_tf(repo):
         if filename == "organization.tf"
         and hcl.unquote(label) == repo_lib.WORKLOAD_RESOURCE
     ]
-    folder = naming.workload_folder_name("${var.prefix}")
-    assert hcl.unquote(body["display_name"]) == folder
+    assert hcl.unquote(body["display_name"]) == "${local.enclave_display_name}"
     (settings,) = body["resource_settings"]
-    assert hcl.unquote(settings["display_name"]) == folder
+    assert (
+        hcl.unquote(settings["display_name"]) == "${local.enclave_display_name}"
+    )
+    org_tf = (repo.bootstrap_dir / "organization.tf").read_text(
+        encoding="utf-8"
+    )
+    assert f'? "{naming.workload_folder_name("${var.prefix}")}"' in org_tf
+    assert ': "StellarEngine-${local.prefix}"' in org_tf
     assert hcl.unquote(settings["resource_type"]) == "CONSUMER_FOLDER"
     assert body["violation_notifications_enabled"] is True
     assert "var.billing_account.id" in body["billing_account"]

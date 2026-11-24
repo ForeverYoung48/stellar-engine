@@ -24,12 +24,9 @@ module "organization" {
 }
 
 module "root-folder-iam" {
-  count         = var.deploy_org_resources.iam ? 0 : 1
-  source        = "../../../modules/folder"
-  folder_create = false
-  id            = var.assured_workloads.folder
-  iam_bindings_additive = {
-    for k, v in local.iam_bindings_additive : k => v
-    if !contains(["roles/billing.costsManager", "roles/billing.user"], v.role)
-  }
+  count                 = var.deploy_org_resources.iam ? 0 : 1
+  source                = "../../../modules/folder"
+  folder_create         = false
+  id                    = var.assured_workloads.folder
+  iam_bindings_additive = local._root_folder_iam_bindings_additive
 }
