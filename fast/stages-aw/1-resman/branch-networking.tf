@@ -18,17 +18,23 @@
 
 locals {
   # FAST-specific IAM
-  _network_folder_fast_iam = {
-    # read-write (apply) automation service account
-    "roles/logging.admin"                  = [module.branch-network-sa.iam_email]
-    "roles/owner"                          = [module.branch-network-sa.iam_email]
-    "roles/resourcemanager.folderAdmin"    = [module.branch-network-sa.iam_email]
-    "roles/resourcemanager.projectCreator" = [module.branch-network-sa.iam_email]
-    "roles/compute.xpnAdmin"               = [module.branch-network-sa.iam_email]
-    # read-only (plan) automation service account
-    "roles/viewer"                       = [module.branch-network-r-sa.iam_email]
-    "roles/resourcemanager.folderViewer" = [module.branch-network-r-sa.iam_email]
-  }
+  _network_folder_fast_iam = merge(
+    {
+      # read-write (apply) automation service account
+      "roles/logging.admin"                  = [module.branch-network-sa.iam_email]
+      "roles/owner"                          = [module.branch-network-sa.iam_email]
+      "roles/resourcemanager.folderAdmin"    = [module.branch-network-sa.iam_email]
+      "roles/resourcemanager.projectCreator" = [module.branch-network-sa.iam_email]
+      "roles/compute.xpnAdmin"               = [module.branch-network-sa.iam_email]
+      # read-only (plan) automation service account
+      "roles/viewer"                       = [module.branch-network-r-sa.iam_email]
+      "roles/resourcemanager.folderViewer" = [module.branch-network-r-sa.iam_email]
+    },
+    !var.iam_deny_guardrails.enabled ? {} : {
+      "roles/iam.denyReviewer"          = [module.branch-network-r-sa.iam_email]
+      "roles/resourcemanager.tagViewer" = [module.branch-network-r-sa.iam_email]
+    }
+  )
   # deep-merge FAST-specific IAM with user-provided bindings in var.folder_iam
   _network_folder_iam = merge(
     var.folder_iam.network,

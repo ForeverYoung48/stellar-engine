@@ -38,6 +38,7 @@ The following diagram illustrates the high-level design of created resources and
   - [KMS keys](#kms-keys)
   - [VPC Service Controls configuration](#vpc-service-controls-configuration)
     - [Trial a candidate configuration](#trial-a-candidate-configuration)
+  - [IAM Deny guardrails](#iam-deny-guardrails)
 - [Notes](#notes)
 - [Variables](#variables)
 - [Outputs](#outputs)
@@ -407,6 +408,17 @@ The enforced status and the dry-run spec share the access level definitions, the
 - editing an access level or a policy that `perimeter_default` references changes the enforced perimeter on the same apply, so define the candidate under a new key and reference that key in `dry_run_spec`
 - a change to `resource_discovery` adds or removes Google Cloud Projects in both the enforced status and the dry-run spec, so to trial a new Google Cloud Project keep it in `resource_discovery.ignore_projects` and add `projects/<number>` to `dry_run_spec.resources` together with the enforced `perimeter_default.resources` values
 
+### IAM Deny guardrails
+
+Set `iam_deny_guardrails.enabled = true` to create a `google_iam_deny_policy` resource that blocks all supported `accesscontextmanager.googleapis.com` mutation and IAM permissions while preserving read-only `get` and `list` operations. Grant `roles/iam.denyAdmin` to the Stage 3 automation service account (`security`) and `roles/iam.denyReviewer` to the split read-only CI/CD `plan` service account (`security-r` / `<prefix>-prod-resman-sec-0r`) on the target organization or folder parent before enabling this guardrail.
+
+> [!WARNING]
+> Operators running Terraform directly with human Application Default Credentials without impersonating the `security` automation service account must include `principal://goog/subject/<email>` in `iam_deny_guardrails.exception_principals` before applying so they do not lock themselves out of managing Access Context Manager policies and VPC Service Controls perimeters.
+
+- Leave `iam_deny_guardrails.enabled` at its default value `false` to create zero `google_iam_deny_policy` resources on existing deployments.
+- The policy attaches to `organizations/<organization.id>` by default so it governs organization-level VPC Service Controls access policies, or to `iam_deny_guardrails.parent` when targeting a folder-scoped policy (`folders/<id>`).
+- Plan-time validation fails closed when `enabled = true` unless at least one exception principal is supplied through `exception_principals` (`principal://` or `principalSet://`), `security_service_account`, or `service_accounts.security` from Stage 1 outputs, preventing accidental lockout of all Access Context Manager administrators.
+
 ## Notes
 
 Some references that might be useful in setting up this stage
@@ -424,11 +436,11 @@ Some references that might be useful in setting up this stage
 | [billing_account](variables.tf#L43) | Billing account id. If billing account is not part of the same org set `is_org_level` to false. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
 | [envs_folders](variables.tf#L84) | List of environments to be created for projects to go into. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> | ✓ |  |
 | [folder_ids](variables.tf#L136) | Folder name => id mappings, the 'security' folder name must exist. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
-| [organization](variables.tf#L218) | Organization details. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
-| [prefix](variables.tf#L234) | Prefix used for resources that need unique names. Use 9 characters or less. | <code>string</code> | ✓ |  |
-| [regions](variables.tf#L251) | Region definitions. Inherited from 0-bootstrap outputs. Must be specified in bootstrap terraform.tfvars. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
-| [service_accounts](variables.tf#L260) | Automation service accounts that can assign the encrypt/decrypt roles on keys. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
-| [tenant_accounts](variables.tf#L275) | Base Tenant accounts that are created for each folder, provided as a combination of environment and tenant. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> | ✓ |  |
+| [organization](variables.tf#L269) | Organization details. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [prefix](variables.tf#L285) | Prefix used for resources that need unique names. Use 9 characters or less. | <code>string</code> | ✓ |  |
+| [regions](variables.tf#L302) | Region definitions. Inherited from 0-bootstrap outputs. Must be specified in bootstrap terraform.tfvars. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [service_accounts](variables.tf#L311) | Automation service accounts that can assign the encrypt/decrypt roles on keys. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [tenant_accounts](variables.tf#L328) | Base Tenant accounts that are created for each folder, provided as a combination of environment and tenant. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> | ✓ |  |
 | [assured_workloads](variables.tf#L23) | Configuration for Assured Workloads. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
 | [billing_override](variables.tf#L56) | Optional billing override configuration. If set, disables service account impersonation for project billing linkage and runs under the user account using the specified quota projects. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
 | [common_services_folder](variables.tf#L65) | Common services folder where non-tenant related resources should be kept. | <code>string</code> |  | <code>null</code> |
@@ -438,12 +450,13 @@ Some references that might be useful in setting up this stage
 | [fast_features](variables.tf#L120) | Selective control for top-level FAST features. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
 | [gcp_ranges](variables.tf#L144) | GCP address ranges configuration. | <code>any</code> |  | <code>null</code> |
 | [groups](variables.tf#L151) | IAM groups configuration. | <code>any</code> |  | <code>null</code> |
-| [kms_keys](variables.tf#L158) | KMS keys to create, keyed by name. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [kms_protection_level](variables.tf#L201) | Protection level (HSM or SOFTWARE) applied to every key in kms_keys that does not set its own version_template. | <code>string</code> |  | <code>null</code> |
-| [logging](variables.tf#L208) | Log writer identities for organization / folders. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
-| [outputs_location](variables.tf#L228) | Path where providers, tfvars files, and lists for the following stages are written. Leave empty to disable. | <code>string</code> |  | <code>null</code> |
-| [regime_mapping](variables.tf#L244) | Compliance regime shorthand mapping. | <code>any</code> |  | <code>null</code> |
-| [vpc_sc](variables.tf#L286) | VPC SC configuration. Setting `perimeter_default.dry_run_spec` keeps the perimeter enforced and trials the overridden attributes in the dry-run spec. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [iam_deny_guardrails](variables.tf#L158) | Opt-in IAM v2 Deny baseline guardrails locking down Access Context Manager and VPC Service Controls mutations. Requires roles/iam.denyAdmin on the target parent. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [kms_keys](variables.tf#L209) | KMS keys to create, keyed by name. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [kms_protection_level](variables.tf#L252) | Protection level (HSM or SOFTWARE) applied to every key in kms_keys that does not set its own version_template. | <code>string</code> |  | <code>null</code> |
+| [logging](variables.tf#L259) | Log writer identities for organization / folders. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [outputs_location](variables.tf#L279) | Path where providers, tfvars files, and lists for the following stages are written. Leave empty to disable. | <code>string</code> |  | <code>null</code> |
+| [regime_mapping](variables.tf#L295) | Compliance regime shorthand mapping. | <code>any</code> |  | <code>null</code> |
+| [vpc_sc](variables.tf#L339) | VPC SC configuration. Setting `perimeter_default.dry_run_spec` keeps the perimeter enforced and trials the overridden attributes in the dry-run spec. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
 
 ## Outputs
 

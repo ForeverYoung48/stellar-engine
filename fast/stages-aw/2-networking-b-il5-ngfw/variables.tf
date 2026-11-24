@@ -274,6 +274,31 @@ variable "groups" {
   default     = null
 }
 
+variable "iam_deny_guardrails" {
+  description = "Opt-in IAM v2 Deny baseline guardrails locking down the NGFW bootstrap bucket. Requires roles/iam.denyAdmin on the VDSS host project and roles/resourcemanager.tagAdmin plus roles/resourcemanager.tagUser for the bucket lockdown tag."
+  type = object({
+    enabled              = optional(bool, false)
+    exception_principals = optional(list(string), [])
+  })
+  default  = {}
+  nullable = false
+  validation {
+    condition = alltrue([
+      for p in var.iam_deny_guardrails.exception_principals :
+      startswith(p, "principal://") || startswith(p, "principalSet://")
+    ])
+    error_message = "Every entry in iam_deny_guardrails.exception_principals must use an IAM v2 principal identifier starting with principal:// or principalSet://."
+  }
+  validation {
+    condition = (
+      !var.iam_deny_guardrails.enabled ||
+      try(var.service_accounts.networking, null) != null ||
+      length(var.iam_deny_guardrails.exception_principals) > 0
+    )
+    error_message = "When iam_deny_guardrails.enabled is true, either service_accounts.networking or at least one entry in iam_deny_guardrails.exception_principals must be set to prevent locking Stage 2 out of the NGFW bootstrap bucket."
+  }
+}
+
 variable "kms_protection_level" {
   # tfdoc:variable:source 0-bootstrap
   description = "KMS protection level."
@@ -662,6 +687,8 @@ variable "service_accounts" {
     data-platform-prod   = string
     gke-dev              = string
     gke-prod             = string
+    networking           = optional(string)
+    networking-r         = optional(string)
     project-factory-dev  = string
     project-factory-prod = string
   })

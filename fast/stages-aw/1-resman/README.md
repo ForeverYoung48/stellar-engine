@@ -9,6 +9,7 @@ Stage 1 provisions environment folders (`Int`, `Test`, and `Prod`), tenant proje
   - [Lightweight multitenancy](#lightweight-multitenancy)
   - [Team folders](#team-folders)
   - [IAM bindings](#iam-bindings)
+  - [IAM Deny guardrails](#iam-deny-guardrails)
   - [Additional folders](#additional-folders)
 - [Variables](#variables)
 - [Outputs](#outputs)
@@ -190,10 +191,21 @@ Use the `folder_iam` variable to manage authoritative IAM bindings on top-level 
 
 See [IAM.md](./IAM.md) for the full list of IAM roles managed by this stage.
 
+### IAM Deny guardrails
+
+Set `iam_deny_guardrails.enabled = true` to attach a consolidated IAM v2 Deny policy (`tenant-baseline-lockdown`) to every tenant folder through the `folder` module. Grant `roles/iam.denyAdmin` to the Stage 1 automation service account (`resman`) and `roles/iam.denyReviewer` to the read-only plan service account (`resman-0r` / `resman-r`) on the parent folder or organization before enabling these guardrails.
+
+- Leave `iam_deny_guardrails.enabled` at its default value `false` to create zero `google_iam_deny_policy` resources and zero additional IAM bindings on existing deployments.
+- Consolidates enabled rules from `kms_key_destruction` (default `true`), `kms_iam_lockdown` (default `true`), `tenant_gke_fleet_registration` (default `true`), and `sa_impersonation_lockdown` (default `false`) into a single multi-rule `tenant-baseline-lockdown` policy per `(env, tenant)` folder, creating zero policies when all four rule toggles are `false`.
+- `kms_key_destruction` blocks irreversible key-destruction and key-disable verbs (exempting only `resman`, `tenant-core-sa`, and operator exceptions), while `kms_iam_lockdown` restricts KMS IAM and metadata updates (also exempting environment-scoped automation SAs, `tenant-self-iac-sa`, and folder service agents so CMEK automation keeps working).
+- Enabling `sa_impersonation_lockdown = true` requires `sa_impersonation_tag` with a namespaced tag key and value so `resource.matchTag` scopes `actAs`, token minting, key creation, and IAM blocks to tagged service accounts without locking out tenant workloads; folder service agents and `tenant-self-iac-sa` are exempted automatically.
+- Provide break-glass IAM v2 identifiers (`principal://` or `principalSet://`) in `exception_principals` or environment-scoped `env_exception_principals` maps; all non-prod environments (`Dev`, `Int`, `Test`) map to non-prod automation SAs and `Prod` maps strictly to production automation SAs.
+- When `iam_deny_guardrails.enabled` is `true`, Stage 1 binds `roles/iam.denyReviewer` for `resman-r` (`<prefix>-prod-resman-0r`) on each tenant folder and binds `roles/iam.denyReviewer` plus `roles/resourcemanager.tagViewer` for `networking-r` (`<prefix>-prod-resman-net-0r`) on the `Networking` folder. For split read-only CI/CD `plan` pipelines across stages, ensure `resman-0r` holds `roles/iam.denyReviewer` on the parent scope, `networking-r` holds `roles/iam.denyReviewer` and `roles/resourcemanager.tagViewer` on the `Networking` folder or VDSS host project, and `security-r` (`<prefix>-prod-resman-sec-0r`) holds `roles/iam.denyReviewer` on the Stage 3 organization or folder parent.
+- The Google Cloud IAM v2 API (`iam.googleapis.com`) enforces a default quota of 5 Read requests per minute and 5 Write requests per minute per quota project. On enclaves with more than 4 tenant-environment folders, pass `-parallelism=1` to `terraform plan` and `terraform apply` or request an IAM v2 quota increase on the `<prefix>-prod-iac-core-0` automation project.
+
 ### Additional folders
 
 Clone an existing `branch-*.tf` file and update its module names and folder identifiers to add a new top-level hierarchy branch, such as shared GKE clusters.
-
 <!-- BEGIN TFDOC -->
 ## Variables
 
@@ -204,10 +216,10 @@ Clone an existing `branch-*.tf` file and update its module names and folder iden
 | [billing_account](variables.tf#L61) | Billing account id. If billing account is not part of the same org set `is_org_level` to `false`. To disable handling of billing IAM roles set `no_iam` to `true`. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
 | [common_services_folder](variables.tf#L175) | Common services folder where non-tenant related resources should be kept. | <code>string</code> | ✓ |  |
 | [envs_folders](variables.tf#L208) | List of environments to be created for projects to go into. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> | ✓ |  |
-| [organization](variables.tf#L287) | Organization details. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
-| [prefix](variables.tf#L303) | Prefix used for resources that need unique names. Use 7 characters or less. | <code>string</code> | ✓ |  |
-| [regime_mapping](variables.tf#L314) | Mapping of compliance regime names to short codes. | <code>map&#40;string&#41;</code> | ✓ |  |
-| [regions](variables.tf#L319) | Region definitions. Inherited from 0-bootstrap outputs. Must be specified in bootstrap terraform.tfvars. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [organization](variables.tf#L337) | Organization details. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [prefix](variables.tf#L353) | Prefix used for resources that need unique names. Use 7 characters or less. | <code>string</code> | ✓ |  |
+| [regime_mapping](variables.tf#L364) | Mapping of compliance regime names to short codes. | <code>map&#40;string&#41;</code> | ✓ |  |
+| [regions](variables.tf#L369) | Region definitions. Inherited from 0-bootstrap outputs. Must be specified in bootstrap terraform.tfvars. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
 | [assured_workloads](variables.tf#L24) | Configuration for Assured Workloads. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
 | [billing_override](variables.tf#L72) | Optional billing override configuration. If set, disables service account impersonation for project billing linkage and runs under the user account using the specified quota projects. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
 | [cicd_repositories](variables.tf#L81) | CI/CD repository configuration. Identity providers reference keys in the `automation.federated_identity_providers` variable. Set to null to disable, or set individual repositories to null if not needed. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
@@ -218,11 +230,12 @@ Clone an existing `branch-*.tf` file and update its module names and folder iden
 | [folder_iam](variables.tf#L241) | Authoritative IAM for top-level folders. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
 | [force_destroy](variables.tf#L258) | Toggles force_destroy for GCS buckets. | <code>bool</code> |  | <code>false</code> |
 | [groups](variables.tf#L264) | Group names or IAM-format principals to grant organization-level permissions. If just the name is provided, the 'group:' principal and organization domain are interpolated. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [kms_protection_level](variables.tf#L279) | KMS protection level. | <code>string</code> |  | <code>null</code> |
-| [outputs_location](variables.tf#L297) | Enable writing provider, tfvars and CI/CD workflow files to local filesystem. Leave null to disable. | <code>string</code> |  | <code>null</code> |
-| [team_folders](variables.tf#L328) | Team folders to be created. Format is described in a code comment. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>null</code> |
-| [tenants](variables.tf#L344) | Lightweight tenant definitions. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [tenants_config](variables.tf#L373) | Lightweight tenants shared configuration. Roles will be assigned to tenant admin group and service accounts. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [iam_deny_guardrails](variables.tf#L279) | Opt-in IAM v2 Deny baseline guardrails applied to tenant folders. Requires roles/iam.denyAdmin on the target folders for apply and roles/iam.denyReviewer for read-only plan. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [kms_protection_level](variables.tf#L329) | KMS protection level. | <code>string</code> |  | <code>null</code> |
+| [outputs_location](variables.tf#L347) | Enable writing provider, tfvars and CI/CD workflow files to local filesystem. Leave null to disable. | <code>string</code> |  | <code>null</code> |
+| [team_folders](variables.tf#L378) | Team folders to be created. Format is described in a code comment. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>null</code> |
+| [tenants](variables.tf#L394) | Lightweight tenant definitions. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [tenants_config](variables.tf#L423) | Lightweight tenants shared configuration. Roles will be assigned to tenant admin group and service accounts. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
 
 ## Outputs
 

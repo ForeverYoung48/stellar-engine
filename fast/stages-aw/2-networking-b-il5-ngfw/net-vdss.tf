@@ -49,6 +49,7 @@ module "vdss-host-project" {
       try(local.service_accounts.project-factory-prod, null)
     ])
   }
+  tags = local._ngfw_bootstrap_project_tags
 }
 
 moved {

@@ -276,6 +276,56 @@ variable "groups" {
   default  = {}
 }
 
+variable "iam_deny_guardrails" {
+  description = "Opt-in IAM v2 Deny baseline guardrails applied to tenant folders. Requires roles/iam.denyAdmin on the target folders for apply and roles/iam.denyReviewer for read-only plan."
+  type = object({
+    enabled                   = optional(bool, false)
+    env_exception_principals  = optional(map(list(string)), {})
+    exception_principals      = optional(list(string), [])
+    kms_iam_lockdown          = optional(bool, true)
+    kms_key_destruction       = optional(bool, true)
+    sa_impersonation_lockdown = optional(bool, false)
+    sa_impersonation_tag = optional(object({
+      key   = string
+      value = string
+    }))
+    tenant_gke_fleet_registration = optional(bool, true)
+  })
+  default  = {}
+  nullable = false
+  validation {
+    condition = (
+      !(var.iam_deny_guardrails.enabled && var.iam_deny_guardrails.sa_impersonation_lockdown) ||
+      var.iam_deny_guardrails.sa_impersonation_tag != null
+    )
+    error_message = "When iam_deny_guardrails.enabled and iam_deny_guardrails.sa_impersonation_lockdown are both true, iam_deny_guardrails.sa_impersonation_tag must be set to prevent an unconditional folder-wide actAs lockout."
+  }
+  validation {
+    condition = alltrue([
+      for p in concat(
+        var.iam_deny_guardrails.exception_principals,
+        flatten(values(var.iam_deny_guardrails.env_exception_principals))
+      ) : startswith(p, "principal://") || startswith(p, "principalSet://")
+    ])
+    error_message = "Every entry in iam_deny_guardrails exception principals must use an IAM v2 principal identifier starting with principal:// or principalSet://."
+  }
+  validation {
+    condition = (
+      var.iam_deny_guardrails.sa_impersonation_tag == null || (
+        can(regex(
+          "^[a-z0-9-]+/[a-zA-Z0-9_.-]+$",
+          var.iam_deny_guardrails.sa_impersonation_tag.key
+        )) &&
+        can(regex(
+          "^[a-zA-Z0-9_.-]+$",
+          var.iam_deny_guardrails.sa_impersonation_tag.value
+        ))
+      )
+    )
+    error_message = "When set, iam_deny_guardrails.sa_impersonation_tag must specify a valid namespaced tag key (<parent>/<short_name>) and tag value short name."
+  }
+}
+
 variable "kms_protection_level" {
   # tfdoc:variable:source 0-bootstrap
   description = "KMS protection level."

@@ -155,6 +155,57 @@ variable "groups" {
   default     = null
 }
 
+variable "iam_deny_guardrails" {
+  description = "Opt-in IAM v2 Deny baseline guardrails locking down Access Context Manager and VPC Service Controls mutations. Requires roles/iam.denyAdmin on the target parent."
+  type = object({
+    enabled                  = optional(bool, false)
+    exception_principals     = optional(list(string), [])
+    parent                   = optional(string)
+    security_service_account = optional(string)
+  })
+  default  = {}
+  nullable = false
+  validation {
+    condition = (
+      !var.iam_deny_guardrails.enabled ||
+      length(var.iam_deny_guardrails.exception_principals) > 0 ||
+      try(
+        length(trimspace(var.iam_deny_guardrails.security_service_account)) > 0,
+        false
+      ) ||
+      try(length(trimspace(var.service_accounts.security)) > 0, false)
+    )
+    error_message = "When iam_deny_guardrails.enabled is true, at least one exception principal must be configured in exception_principals, security_service_account, or service_accounts.security to prevent locking out all Access Context Manager administrators."
+  }
+  validation {
+    condition = alltrue([
+      for p in var.iam_deny_guardrails.exception_principals :
+      startswith(p, "principal://") || startswith(p, "principalSet://")
+    ])
+    error_message = "Every entry in iam_deny_guardrails.exception_principals must use an IAM v2 principal identifier starting with principal:// or principalSet://."
+  }
+  validation {
+    condition = (
+      var.iam_deny_guardrails.security_service_account == null ||
+      can(regex(
+        "^[^@\\s]+@[^@\\s]+\\.iam\\.gserviceaccount\\.com$",
+        coalesce(var.iam_deny_guardrails.security_service_account, "")
+      ))
+    )
+    error_message = "When set, iam_deny_guardrails.security_service_account must be a valid Google Cloud service account email."
+  }
+  validation {
+    condition = (
+      var.iam_deny_guardrails.parent == null ||
+      can(regex(
+        "^(organizations|folders)/[0-9]+$",
+        coalesce(var.iam_deny_guardrails.parent, "")
+      ))
+    )
+    error_message = "When set, iam_deny_guardrails.parent must be in organizations/<id> or folders/<id> format."
+  }
+}
+
 variable "kms_keys" {
   description = "KMS keys to create, keyed by name."
   type = map(object({
@@ -269,6 +320,8 @@ variable "service_accounts" {
     gke-prod             = optional(string)
     project-factory-dev  = string
     project-factory-prod = string
+    security             = optional(string)
+    security-r           = optional(string)
   })
 }
 

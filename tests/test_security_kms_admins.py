@@ -76,14 +76,21 @@ class TestKmsRestrictedAdmins(unittest.TestCase):
 
     def test_variable_declares_every_referenced_account(self):
         attributes = _service_accounts_type()
-        referenced = _admin_accounts("dev") + _admin_accounts("prod")
+        referenced = (
+            _admin_accounts("dev")
+            + _admin_accounts("prod")
+            + ["security", "security-r"]
+        )
         self.assertEqual(sorted(referenced), list(attributes))
 
     def test_gcve_and_gke_accounts_are_optional(self):
         attributes = _service_accounts_type()
         for key, attribute_type in attributes.items():
             with self.subTest(key=key):
-                optional = key.startswith(("gcve-", "gke-"))
+                optional = key.startswith(("gcve-", "gke-")) or key in (
+                    "security",
+                    "security-r",
+                )
                 self.assertEqual(
                     attribute_type,
                     "optional(string)" if optional else "string",

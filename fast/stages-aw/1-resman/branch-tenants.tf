@@ -19,16 +19,23 @@
 
 locals {
   _tenant_base_folder_iam = {
-    for k, _ in local.tenant_envs : k => {
-      "roles/cloudasset.owner"               = [module.tenant-core-sa[k].iam_email]
-      "roles/compute.xpnAdmin"               = [module.tenant-core-sa[k].iam_email]
-      "roles/logging.admin"                  = [module.tenant-core-sa[k].iam_email]
-      "roles/owner"                          = [module.tenant-core-sa[k].iam_email]
-      "roles/resourcemanager.folderAdmin"    = [module.tenant-core-sa[k].iam_email]
-      "roles/resourcemanager.projectCreator" = [module.tenant-core-sa[k].iam_email]
-      "roles/resourcemanager.tagUser"        = [module.tenant-core-sa[k].iam_email]
-      "roles/viewer"                         = local.tenant_iam[k]
-    }
+    for k, _ in local.tenant_envs : k => merge(
+      {
+        "roles/cloudasset.owner"               = [module.tenant-core-sa[k].iam_email]
+        "roles/compute.xpnAdmin"               = [module.tenant-core-sa[k].iam_email]
+        "roles/logging.admin"                  = [module.tenant-core-sa[k].iam_email]
+        "roles/owner"                          = [module.tenant-core-sa[k].iam_email]
+        "roles/resourcemanager.folderAdmin"    = [module.tenant-core-sa[k].iam_email]
+        "roles/resourcemanager.projectCreator" = [module.tenant-core-sa[k].iam_email]
+        "roles/resourcemanager.tagUser"        = [module.tenant-core-sa[k].iam_email]
+        "roles/viewer"                         = local.tenant_iam[k]
+      },
+      !var.iam_deny_guardrails.enabled ? {} : {
+        "roles/iam.denyReviewer" = [
+          "serviceAccount:${var.automation.service_accounts.resman-r}",
+        ]
+      }
+    )
   }
   _tenant_custom_folder_roles = distinct(concat(
     var.tenants_config.top_folder_roles,
@@ -67,6 +74,192 @@ locals {
     }
     }
   ]...)
+  # Verified against https://cloud.google.com/iam/docs/deny-permissions-support.
+  _tenant_gke_fleet_denied_permissions = [
+    "gkehub.googleapis.com/features.create",
+    "gkehub.googleapis.com/features.delete",
+    "gkehub.googleapis.com/features.setIamPolicy",
+    "gkehub.googleapis.com/features.update",
+    "gkehub.googleapis.com/fleet.create",
+    "gkehub.googleapis.com/fleet.delete",
+    "gkehub.googleapis.com/fleet.update",
+    "gkehub.googleapis.com/gateway.delete",
+    "gkehub.googleapis.com/gateway.patch",
+    "gkehub.googleapis.com/gateway.post",
+    "gkehub.googleapis.com/gateway.put",
+    "gkehub.googleapis.com/membershipbindings.create",
+    "gkehub.googleapis.com/membershipbindings.delete",
+    "gkehub.googleapis.com/membershipbindings.update",
+    "gkehub.googleapis.com/membershipfeatures.create",
+    "gkehub.googleapis.com/membershipfeatures.delete",
+    "gkehub.googleapis.com/membershipfeatures.update",
+    "gkehub.googleapis.com/memberships.create",
+    "gkehub.googleapis.com/memberships.delete",
+    "gkehub.googleapis.com/memberships.generateConnectManifest",
+    "gkehub.googleapis.com/memberships.setIamPolicy",
+    "gkehub.googleapis.com/memberships.update",
+    "gkehub.googleapis.com/namespaces.create",
+    "gkehub.googleapis.com/namespaces.delete",
+    "gkehub.googleapis.com/namespaces.update",
+    "gkehub.googleapis.com/rbacrolebindings.create",
+    "gkehub.googleapis.com/rbacrolebindings.delete",
+    "gkehub.googleapis.com/rbacrolebindings.update",
+    "gkehub.googleapis.com/scopes.create",
+    "gkehub.googleapis.com/scopes.delete",
+    "gkehub.googleapis.com/scopes.setIamPolicy",
+    "gkehub.googleapis.com/scopes.update",
+  ]
+  # Irreversible destructive and key-disable KMS operations.
+  _tenant_kms_destruction_denied_permissions = [
+    "cloudkms.googleapis.com/cryptoKeyVersions.delete",
+    "cloudkms.googleapis.com/cryptoKeyVersions.destroy",
+    "cloudkms.googleapis.com/cryptoKeyVersions.update",
+    "cloudkms.googleapis.com/cryptoKeys.delete",
+    "cloudkms.googleapis.com/keyRings.delete",
+  ]
+  # KMS IAM and metadata updates split into a companion rule so environment
+  # automation SAs can wire CMEK without gaining key-destruction authority.
+  _tenant_kms_iam_denied_permissions = [
+    "cloudkms.googleapis.com/cryptoKeys.setIamPolicy",
+    "cloudkms.googleapis.com/cryptoKeys.update",
+    "cloudkms.googleapis.com/keyRings.setIamPolicy",
+  ]
+  _tenant_sa_impersonation_denied_permissions = [
+    "iam.googleapis.com/serviceAccountKeys.create",
+    "iam.googleapis.com/serviceAccounts.actAs",
+    "iam.googleapis.com/serviceAccounts.getAccessToken",
+    "iam.googleapis.com/serviceAccounts.getOpenIdToken",
+    "iam.googleapis.com/serviceAccounts.implicitDelegation",
+    "iam.googleapis.com/serviceAccounts.setIamPolicy",
+    "iam.googleapis.com/serviceAccounts.signBlob",
+    "iam.googleapis.com/serviceAccounts.signJwt",
+  ]
+  _tenant_null_denial_condition = (
+    true
+    ? null
+    : {
+      title       = ""
+      description = ""
+      expression  = ""
+    }
+  )
+  _tenant_sa_impersonation_condition = (
+    var.iam_deny_guardrails.sa_impersonation_tag == null
+    ? local._tenant_null_denial_condition
+    : {
+      title       = "tagged_sa_impersonation_scope"
+      description = "Restricts service account impersonation on tagged resources."
+      expression = format(
+        "resource.matchTag('%s', '%s')",
+        var.iam_deny_guardrails.sa_impersonation_tag.key,
+        var.iam_deny_guardrails.sa_impersonation_tag.value
+      )
+    }
+  )
+  _tenant_deny_env_operator_exceptions = {
+    for k, v in local.tenant_envs : k => distinct(concat(
+      var.iam_deny_guardrails.exception_principals,
+      lookup(var.iam_deny_guardrails.env_exception_principals, v.env, []),
+      lookup(var.iam_deny_guardrails.env_exception_principals, lower(v.env), [])
+    ))
+  }
+  _tenant_deny_base_exceptions = {
+    for k, v in local.tenant_envs : k => distinct(concat(
+      [
+        for sa in compact([
+          var.automation.service_accounts.resman,
+          module.tenant-core-sa[k].email,
+        ]) : "principal://iam.googleapis.com/projects/-/serviceAccounts/${sa}"
+      ],
+      local._tenant_deny_env_operator_exceptions[k]
+    ))
+  }
+  # Map all non-prod environments (Dev, Int, Test, etc.) to *-dev-sa and Prod
+  # strictly to *-prod-sa, matching Stage 1 automation SA conventions.
+  _tenant_deny_gke_exceptions = {
+    for k, v in local.tenant_envs : k => distinct(concat(
+      local._tenant_deny_base_exceptions[k],
+      [
+        for sa in compact([
+          lower(v.env) != "prod" ? try(module.branch-gke-dev-sa[0].email, null) : null,
+          lower(v.env) == "prod" ? try(module.branch-gke-prod-sa[0].email, null) : null,
+        ]) : "principal://iam.googleapis.com/projects/-/serviceAccounts/${sa}"
+      ]
+    ))
+  }
+  _tenant_deny_automation_static_exceptions = {
+    for k, v in local.tenant_envs : k => distinct(concat(
+      local._tenant_deny_base_exceptions[k],
+      [
+        for sa in compact([
+          module.tenant-self-iac-sa[k].email,
+          lower(v.env) != "prod" ? try(module.branch-dp-dev-sa[0].email, null) : null,
+          lower(v.env) == "prod" ? try(module.branch-dp-prod-sa[0].email, null) : null,
+          lower(v.env) != "prod" ? try(module.branch-gcve-dev-sa[0].email, null) : null,
+          lower(v.env) == "prod" ? try(module.branch-gcve-prod-sa[0].email, null) : null,
+          lower(v.env) != "prod" ? try(module.branch-gke-dev-sa[0].email, null) : null,
+          lower(v.env) == "prod" ? try(module.branch-gke-prod-sa[0].email, null) : null,
+          lower(v.env) != "prod" ? try(module.branch-pf-dev-sa[0].email, null) : null,
+          lower(v.env) == "prod" ? try(module.branch-pf-prod-sa[0].email, null) : null,
+        ]) : "principal://iam.googleapis.com/projects/-/serviceAccounts/${sa}"
+      ]
+    ))
+  }
+  _tenant_deny_service_agent_set = {
+    for k, _ in local.tenant_envs : k => (
+      "principalSet://cloudresourcemanager.googleapis.com/${module.tenant-top-folders[k].id}/type/ServiceAgent"
+    )
+  }
+  _tenant_deny_automation_exceptions = {
+    for k, _ in local.tenant_envs : k => concat(
+      local._tenant_deny_automation_static_exceptions[k],
+      [local._tenant_deny_service_agent_set[k]]
+    )
+  }
+  _tenant_enabled_deny_rules = {
+    for k, _ in local.tenant_envs : k => concat(
+      !var.iam_deny_guardrails.kms_key_destruction ? [] : [{
+        description          = "Blocks KMS key version destruction, disabling, and deletion."
+        denied_principals    = tolist(["principalSet://goog/public:all"])
+        denied_permissions   = tolist(local._tenant_kms_destruction_denied_permissions)
+        denial_condition     = local._tenant_null_denial_condition
+        exception_principals = tolist(local._tenant_deny_base_exceptions[k])
+      }],
+      !var.iam_deny_guardrails.kms_iam_lockdown ? [] : [{
+        description          = "Restricts KMS key and keyring IAM and metadata updates to authorized automation."
+        denied_principals    = tolist(["principalSet://goog/public:all"])
+        denied_permissions   = tolist(local._tenant_kms_iam_denied_permissions)
+        denial_condition     = local._tenant_null_denial_condition
+        exception_principals = tolist(local._tenant_deny_automation_exceptions[k])
+      }],
+      !var.iam_deny_guardrails.tenant_gke_fleet_registration ? [] : [{
+        description          = "Blocks GKE Hub fleet and membership mutations in tenant folders."
+        denied_principals    = tolist(["principalSet://goog/public:all"])
+        denied_permissions   = tolist(local._tenant_gke_fleet_denied_permissions)
+        denial_condition     = local._tenant_null_denial_condition
+        exception_principals = tolist(local._tenant_deny_gke_exceptions[k])
+      }],
+      !var.iam_deny_guardrails.sa_impersonation_lockdown ? [] : [{
+        description          = "Blocks service account actAs, token minting, key creation, and IAM changes."
+        denied_principals    = tolist(["principalSet://goog/public:all"])
+        denied_permissions   = tolist(local._tenant_sa_impersonation_denied_permissions)
+        denial_condition     = local._tenant_sa_impersonation_condition
+        exception_principals = tolist(local._tenant_deny_automation_exceptions[k])
+      }]
+    )
+  }
+  _tenant_iam_deny_policies = {
+    for k, rules in local._tenant_enabled_deny_rules : k => (
+      !var.iam_deny_guardrails.enabled || length(rules) == 0
+      ? {}
+      : {
+        tenant-baseline-lockdown = {
+          display_name = "Tenant folder IAM Deny baseline guardrails"
+          rules        = rules
+        }
+      }
+    )
+  }
 }
 
 # Tenant folders (top, core, self)
@@ -81,12 +274,13 @@ module "tenant-top-folders" {
 }
 
 module "tenant-top-folders-iam" {
-  source        = "../../../modules/folder"
-  for_each      = local.tenant_envs
-  id            = module.tenant-top-folders[each.key].id
-  folder_create = false
-  tag_bindings  = null
-  iam           = local._tenant_folder_iam[each.key]
+  source            = "../../../modules/folder"
+  for_each          = local.tenant_envs
+  id                = module.tenant-top-folders[each.key].id
+  folder_create     = false
+  tag_bindings      = null
+  iam               = local._tenant_folder_iam[each.key]
+  iam_deny_policies = local._tenant_iam_deny_policies[each.key]
 }
 
 removed {
