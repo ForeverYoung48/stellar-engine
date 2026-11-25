@@ -13,46 +13,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set -euo pipefail
 
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
-# Generate mock provider files for all stages in stages-aw
-echo 'terraform {
-  required_version = ">= 1.7.4"
+STAGES=(
+  "fast/stages-aw/0-bootstrap"
+  "fast/stages-aw/1-resman"
+  "fast/stages-aw/2-networking-a-fedramp"
+  "fast/stages-aw/2-networking-b-il5-ngfw"
+  "fast/stages-aw/3-security"
+)
+
+MOCK_VERSIONS='terraform {
+  required_version = ">= 1.12.2"
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 5.24.0"
+      version = ">= 8.6.0, < 9.0.0"
     }
     google-beta = {
-      source = "hashicorp/google-beta"
-      version = ">=1.0.0"
+      source  = "hashicorp/google-beta"
+      version = ">= 8.6.0, < 9.0.0"
     }
     local = {
-      source = "hashicorp/local"
-      version = ">=2.0.0"
+      source  = "hashicorp/local"
+      version = ">= 2.4.0"
     }
     time = {
       source  = "hashicorp/time"
-      version = ">=0.0.0"
+      version = ">= 0.9.1"
     }
     external = {
       source  = "hashicorp/external"
-      version = ">=0.0.0"
+      version = ">= 2.3.0"
     }
-   random = {
+    random = {
       source  = "hashicorp/random"
-      version = ">=3.0.0"
+      version = ">= 3.5.0"
     }
-   tls = {
+    tls = {
       source  = "hashicorp/tls"
-      version = ">=3.0.0"
+      version = ">= 4.0.0"
     }
   }
-}' | tee "${SCRIPT_DIR}"/fast/stages-aw/0-bootstrap/mock-versions.tf \
-         "${SCRIPT_DIR}"/fast/stages-aw/1-resman/mock-versions.tf \
-         "${SCRIPT_DIR}"/fast/stages-aw/2-networking-a-fedramp/mock-versions.tf \
-         "${SCRIPT_DIR}"/fast/stages-aw/2-networking-b-il5-ngfw/mock-versions.tf \
-         "${SCRIPT_DIR}"/fast/stages-aw/3-security/mock-versions.tf
+}'
 
-
+# Generate mock-versions.tf only when a stage has no checked-in versions.tf.
+for stage in "${STAGES[@]}"; do
+  stage_dir="${SCRIPT_DIR}/${stage}"
+  if [[ -f "${stage_dir}/versions.tf" ]]; then
+    rm -f "${stage_dir}/mock-versions.tf"
+    continue
+  fi
+  printf '%s\n' "${MOCK_VERSIONS}" > "${stage_dir}/mock-versions.tf"
+done

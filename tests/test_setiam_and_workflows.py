@@ -28,6 +28,9 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _BOOTSTRAP_DIR = _REPO_ROOT / "fast/stages-aw/0-bootstrap"
 _RESMAN_DIR = _REPO_ROOT / "fast/stages-aw/1-resman"
 _ASSETS_DIR = _REPO_ROOT / "fast/assets"
+_FAST_DIR = _REPO_ROOT / "fast"
+_STAGE_LINKS_SH = _FAST_DIR / "stage-links.sh"
+_GENERATE_MOCKS_SH = _REPO_ROOT / "generate-mocks.sh"
 _SETIAM_SH = _BOOTSTRAP_DIR / "setIAM.sh"
 _SETIAM_SAMPLE = _BOOTSTRAP_DIR / "setIAM.yaml.sample"
 _SETIAM_TEST_SH = _REPO_ROOT / "tests/test_setiam.sh"
@@ -41,6 +44,33 @@ _GITLAB_TEMPLATES = (
     _BOOTSTRAP_DIR / "templates/workflow-gitlab.yaml",
     _RESMAN_DIR / "templates/workflow-gitlab.yaml",
     _ASSETS_DIR / "templates/workflow-gitlab.yaml",
+)
+_SOURCEREPO_TEMPLATES = (
+    _BOOTSTRAP_DIR / "templates/workflow-sourcerepo.yaml",
+    _RESMAN_DIR / "templates/workflow-sourcerepo.yaml",
+    _ASSETS_DIR / "templates/workflow-sourcerepo.yaml",
+)
+_STAGE_EXPECTED_PROVIDERS = {
+    "0-bootstrap": {"google", "google-beta", "local", "null", "time"},
+    "1-resman": {"google", "google-beta", "local", "time"},
+    "2-networking-a-fedramp": {"google", "google-beta", "local", "time"},
+    "2-networking-b-il5-ngfw": {
+        "external",
+        "google",
+        "google-beta",
+        "local",
+        "null",
+        "random",
+        "time",
+        "tls",
+    },
+    "3-security": {"google", "google-beta", "local", "time"},
+}
+_PROVIDER_BLOCK_RE = re.compile(
+    r"^\s{4}([a-z0-9-]+)\s*=\s*\{\s*"
+    r'source\s*=\s*"([^"]+)"\s*'
+    r'version\s*=\s*"([^"]+)"',
+    re.MULTILINE,
 )
 
 _APPLY_SA = "apply@my-project.iam.gserviceaccount.com"
@@ -349,6 +379,112 @@ class TestCicdWorkflowHardening(unittest.TestCase):
         self.assertEqual(gl_contents[0], gl_contents[1])
         self.assertEqual(gl_contents[0], gl_contents[2])
 
+        sr_contents = [
+            p.read_text(encoding="utf-8") for p in _SOURCEREPO_TEMPLATES
+        ]
+        self.assertEqual(sr_contents[0], sr_contents[1])
+        self.assertEqual(sr_contents[0], sr_contents[2])
+
+    def test_sourcerepo_workflows_use_ga_gcloud_storage_and_tf_version(self):
+        for tpl_path in _SOURCEREPO_TEMPLATES:
+            raw = tpl_path.read_text(encoding="utf-8")
+            self.assertIn("/google-cloud-sdk/bin/gcloud storage cp", raw)
+            self.assertNotIn("gsutil", raw)
+            self.assertIn(f"_TF_VERSION: {_EXPECTED_TF_VERSION}", raw)
+
+    def test_fast_tree_has_no_gcloud_alpha_storage_or_gsutil(self):
+        skip_dirs = {".git", ".terraform", ".venv", "venv", "__pycache__"}
+        offending = []
+        for root, dirs, files in os.walk(_FAST_DIR):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for fname in files:
+                fpath = pathlib.Path(root) / fname
+                try:
+                    text = fpath.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue
+                if "gcloud alpha storage" in text or "gsutil" in text:
+                    offending.append(str(fpath.relative_to(_REPO_ROOT)))
+        self.assertEqual(offending, [])
+
+    def test_stage_links_uses_ga_gcloud_storage_cp(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stage_dir = pathlib.Path(tmpdir) / "1-resman"
+            stage_dir.mkdir()
+            res = subprocess.run(
+                [
+                    "bash",
+                    str(_STAGE_LINKS_SH),
+                    "gs://example-iac-core-outputs-0",
+                ],
+                cwd=stage_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn(
+                "gcloud storage cp "
+                "gs://example-iac-core-outputs-0/providers/"
+                "1-resman-providers.tf ./",
+                res.stdout,
+            )
+            self.assertNotIn("gcloud alpha storage", res.stdout)
+
+    def test_stages_aw_declare_valid_versions_tf(self):
+        stages_root = _FAST_DIR / "stages-aw"
+        for stage, expected_providers in _STAGE_EXPECTED_PROVIDERS.items():
+            vfile = stages_root / stage / "versions.tf"
+            with self.subTest(stage=stage):
+                self.assertTrue(vfile.is_file(), f"Missing {vfile}")
+                text = vfile.read_text(encoding="utf-8")
+                self.assertIn('required_version = ">= 1.12.2"', text)
+                providers = {
+                    name: (source, constraint)
+                    for name, source, constraint in _PROVIDER_BLOCK_RE.findall(
+                        text
+                    )
+                }
+                self.assertEqual(set(providers), expected_providers)
+                for google_key in ("google", "google-beta"):
+                    src, ver = providers[google_key]
+                    self.assertEqual(src, f"hashicorp/{google_key}")
+                    self.assertEqual(ver, ">= 8.6.0, < 9.0.0")
+
+    def test_generate_mocks_skips_stages_with_versions_tf(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            shutil.copy2(_GENERATE_MOCKS_SH, tmp / "generate-mocks.sh")
+            stages = sorted(_STAGE_EXPECTED_PROVIDERS)
+            for idx, stage in enumerate(stages):
+                sdir = tmp / "fast/stages-aw" / stage
+                sdir.mkdir(parents=True)
+                if idx == 0:
+                    # Leave the first stage without versions.tf.
+                    continue
+                (sdir / "versions.tf").write_text(
+                    'terraform {\n  required_version = ">= 1.12.2"\n}\n',
+                    encoding="utf-8",
+                )
+                # Stale mock-versions.tf is removed when versions.tf exists.
+                (sdir / "mock-versions.tf").write_text(
+                    "# stale\n", encoding="utf-8"
+                )
+
+            res = subprocess.run(
+                ["bash", str(tmp / "generate-mocks.sh")],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            stages_dir = tmp / "fast/stages-aw"
+            first_mock = stages_dir / stages[0] / "mock-versions.tf"
+            self.assertTrue(first_mock.is_file())
+            for stage in stages[1:]:
+                mock_file = stages_dir / stage / "mock-versions.tf"
+                self.assertFalse(mock_file.exists())
+
 
 class TestSetIamHardening(unittest.TestCase):
     def test_setiam_static_hardening_invariants(self):
@@ -497,7 +633,13 @@ class TestSetIamHardening(unittest.TestCase):
         if shellcheck_bin is None:
             self.skipTest("shellcheck not installed on PATH")
         res = subprocess.run(
-            [shellcheck_bin, str(_SETIAM_SH), str(_SETIAM_TEST_SH)],
+            [
+                shellcheck_bin,
+                str(_SETIAM_SH),
+                str(_SETIAM_TEST_SH),
+                str(_STAGE_LINKS_SH),
+                str(_GENERATE_MOCKS_SH),
+            ],
             capture_output=True,
             text=True,
             check=False,
