@@ -59,6 +59,7 @@ TRANSPORT_GRPC = "grpc"
 TRANSPORT_REST = "rest"
 VALID_TRANSPORTS = (TRANSPORT_GRPC, TRANSPORT_REST)
 TRANSPORT_ENV_VAR = "STELLAR_GCP_TRANSPORT"
+_CLOUDSDK_CA_ENV_VAR = "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE"
 
 _TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 _CLOUD_IDENTITY_URL = "https://cloudidentity.googleapis.com/v1/groups:lookup"
@@ -215,8 +216,9 @@ def detect_network_config(
     """Detects custom CA certificate and proxy settings from env and gcloud.
 
     Standard environment variables (`REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
-    `SSL_CERT_FILE`, `HTTPS_PROXY`, `HTTP_PROXY`) take precedence over gcloud
-    properties (`core/custom_ca_certs_file` and `proxy/*`).
+    `SSL_CERT_FILE`, `HTTPS_PROXY`, `HTTP_PROXY`) take precedence over
+    `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE`, which in turn takes precedence
+    over gcloud properties (`core/custom_ca_certs_file` and `proxy/*`).
 
     Args:
         environ: Process environment mapping, defaulting to `os.environ`.
@@ -234,6 +236,10 @@ def detect_network_config(
         or env.get("SSL_CERT_FILE", "").strip()
         or None
     )
+    if ca_bundle is None:
+        cloudsdk_ca = env.get(_CLOUDSDK_CA_ENV_VAR, "").strip()
+        if cloudsdk_ca:
+            ca_bundle = str(pathlib.Path(cloudsdk_ca).expanduser())
     proxies: dict[str, str] = {}
     http_proxy = (
         env.get("HTTP_PROXY", "").strip() or env.get("http_proxy", "").strip()

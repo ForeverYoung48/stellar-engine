@@ -206,15 +206,26 @@ def check_identity(ctx):
     )
     try:
         ctx.principal = ctx.cloud.adc_principal()
-    except api.CredentialsError as error:
+    except (api.CredentialsError, api.CloudError) as error:
+        is_credentials_error = isinstance(error, api.CredentialsError)
+        detail = (
+            f"Application Default Credentials are not usable: {error}"
+            if is_credentials_error
+            else f"Application Default Credentials check failed: {error}"
+        )
+        remedy = (
+            "Run `gcloud auth application-default login`."
+            if is_credentials_error
+            else None
+        )
         results.append(
             CheckResult(
                 "identity.adc",
                 Category.IDENTITY,
                 "Application Default Credentials",
                 Status.FAIL,
-                f"Application Default Credentials are not usable: {error}",
-                remedy="Run `gcloud auth application-default login`.",
+                detail,
+                remedy=remedy,
                 doc=DOC_WORKSTATION,
             )
         )

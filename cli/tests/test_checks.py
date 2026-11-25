@@ -23,6 +23,7 @@ from stellar_engine import repo as repo_lib
 from stellar_engine.gcp import api
 from stellar_engine.preflight import checks
 from stellar_engine.preflight import result
+from stellar_engine.preflight import runner
 
 Status = result.Status
 
@@ -124,6 +125,27 @@ class TestIdentity:
         assert found["identity.adc"].status == Status.FAIL
         assert "application-default login" in remedy(found["identity.adc"])
         assert "identity.bootstrap_user" not in found
+
+    def test_adc_cloud_error_preserves_gcloud_identity(self, make_ctx, cloud):
+        cloud.principal = api.CloudError(
+            "A SOCKS proxy is configured, but PySocks is not installed."
+        )
+        results = checks.check_identity(make_ctx())
+        assert [item.check_id for item in results] == [
+            "identity.gcloud",
+            "identity.adc",
+        ]
+        found = by_id(results)
+        assert found["identity.gcloud"].status == Status.PASS
+        assert found["identity.adc"].status == Status.FAIL
+        assert "PySocks" in found["identity.adc"].detail
+        assert found["identity.adc"].remedy is None
+        assert found["identity.adc"].doc == checks.DOC_WORKSTATION
+
+        run_found = by_id(runner.run(make_ctx(), [checks.check_identity]))
+        assert "identity.error" not in run_found
+        assert run_found["identity.gcloud"].status == Status.PASS
+        assert run_found["identity.adc"].status == Status.FAIL
 
     def test_impersonation_warns(self, make_ctx):
         environ = {"GOOGLE_IMPERSONATE_SERVICE_ACCOUNT": "x@y.iam.com"}

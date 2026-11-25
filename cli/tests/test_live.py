@@ -582,6 +582,64 @@ def test_detect_network_config_ssl_cert_file_fallback():
     assert config.proxies == {}
 
 
+def test_detect_network_config_cloudsdk_ca_env_without_gcloud(monkeypatch):
+    monkeypatch.setattr(live.shutil, "which", lambda name: None)
+    config = live.detect_network_config(
+        environ={"CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE": " ~/custom-ca.pem "}
+    )
+    expected = str(live.pathlib.Path("~/custom-ca.pem").expanduser())
+    assert config.ca_bundle is not None
+    assert config.ca_bundle == expected
+    assert not config.ca_bundle.startswith("~")
+    assert config.proxies == {}
+
+
+@pytest.mark.parametrize(
+    "std_var",
+    ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"],
+)
+def test_detect_network_config_std_ca_beats_cloudsdk_ca_env(std_var):
+    config = live.detect_network_config(
+        environ={
+            std_var: "/env/std-ca.pem",
+            "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE": "/env/cloudsdk-ca.pem",
+        },
+        gcloud_config={"core": {"custom_ca_certs_file": "/gcloud/ca.pem"}},
+    )
+    assert config.ca_bundle == "/env/std-ca.pem"
+
+
+def test_detect_network_config_cloudsdk_ca_env_beats_gcloud_config():
+    config = live.detect_network_config(
+        environ={"CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE": "/env/cloudsdk-ca.pem"},
+        gcloud_config={"core": {"custom_ca_certs_file": "/gcloud/ca.pem"}},
+    )
+    assert config.ca_bundle == "/env/cloudsdk-ca.pem"
+
+    blank_env_config = live.detect_network_config(
+        environ={"CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE": "   "},
+        gcloud_config={"core": {"custom_ca_certs_file": "/gcloud/ca.pem"}},
+    )
+    assert blank_env_config.ca_bundle == "/gcloud/ca.pem"
+
+
+def test_detect_network_config_cloudsdk_ca_env_fast_path_skips_gcloud(
+    monkeypatch,
+):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("gcloud should not be invoked when env sets both")
+
+    monkeypatch.setattr(live.subprocess, "run", fail_if_called)
+    config = live.detect_network_config(
+        environ={
+            "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE": "/env/cloudsdk-ca.pem",
+            "HTTPS_PROXY": "http://env-proxy.example.com:3128",
+        }
+    )
+    assert config.ca_bundle == "/env/cloudsdk-ca.pem"
+    assert config.proxies == {"https": "http://env-proxy.example.com:3128"}
+
+
 def test_detect_network_config_missing_gcloud_falls_back(monkeypatch):
     monkeypatch.setattr(live.shutil, "which", lambda name: None)
     config = live.detect_network_config(environ={})
@@ -681,6 +739,17 @@ def test_socks_proxy_requires_pysocks(adc, monkeypatch):
         _ = cloud._session
     assert "HTTP proxy" in str(caught.value)
     assert "secret" not in str(caught.value)
+
+
+def test_adc_principal_socks_proxy_requires_pysocks(adc, monkeypatch):
+    adc(_Credentials())
+    config = live.NetworkConfig(
+        proxies={"https": "socks5h://proxy.example.com:1080"}
+    )
+    monkeypatch.setattr(live.importlib_util, "find_spec", lambda name: None)
+    cloud = live.LiveCloudApi("grpc", network_config=config)
+    with pytest.raises(api.CloudError, match="PySocks"):
+        cloud.adc_principal()
 
 
 def test_socks_proxy_succeeds_when_pysocks_available(adc, monkeypatch):
